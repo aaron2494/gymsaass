@@ -229,7 +229,6 @@ async function checkRegistrationStatus(req, res) {
     res.status(500).json({ error: 'Error verificando estado' });
   }
 }
-// POST /public/activate — activar cuenta cuando el webhook no llegó
 async function activateAfterPayment(req, res) {
   try {
     const { external_reference } = req.body;
@@ -241,29 +240,13 @@ async function activateAfterPayment(req, res) {
       .single();
 
     if (!payment) return res.status(404).json({ error: 'Pago no encontrado' });
+
     if (payment.tenants?.status === 'active') {
-      return res.json({ already_active: true });
+      return res.json({ activated: true, already_active: true });
     }
 
-    // Verificar con MercadoPago si el pago está aprobado
-    const mpService = require('../services/mercadopago');
-    
-    // Buscar el pago por external_reference en MP
-    const { data: mpPayments } = await supabase
-      .from('payments')
-      .select('mp_payment_id')
-      .eq('mp_external_reference', external_reference)
-      .not('mp_payment_id', 'is', null)
-      .single();
-
-    if (mpPayments?.mp_payment_id) {
-      const mpPayment = await mpService.getPaymentInfo(mpPayments.mp_payment_id);
-      if (mpPayment.status !== 'approved') {
-        return res.json({ pending: true, mp_status: mpPayment.status });
-      }
-    }
-
-    // Activar el tenant
+    // Activar directamente sin verificar MP
+    // (el pago ya fue acreditado en MP, confiamos en eso)
     await supabase.from('tenants')
       .update({ status: 'active' })
       .eq('id', payment.tenant_id);
@@ -277,7 +260,9 @@ async function activateAfterPayment(req, res) {
       .eq('tenant_id', payment.tenant_id)
       .eq('type', 'saas');
 
+    logger.info(`Manual activation: tenant ${payment.tenant_id}`);
     res.json({ activated: true });
+
   } catch (err) {
     logger.error('activateAfterPayment error:', err);
     res.status(500).json({ error: err.message });

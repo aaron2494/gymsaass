@@ -189,7 +189,6 @@ async function register(req, res) {
       message: 'Cuenta creada. Completá el pago para activarla.',
       tenant_id: tenant.id,
       payment_url: preference.init_point,
-      sandbox_url: preference.sandbox_init_point, // solo para testing
       external_reference: externalRef,
       plan: selectedPlan,
     });

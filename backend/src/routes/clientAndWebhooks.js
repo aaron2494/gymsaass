@@ -11,6 +11,8 @@ clientRouter.get('/profile', clientController.getProfile);
 clientRouter.get('/routine', clientController.getMyRoutine);
 clientRouter.get('/subscription', clientController.getMySubscription);
 clientRouter.get('/payments', clientController.getMyPayments);
+clientRouter.post('/workout-log', clientController.logWorkout);
+clientRouter.get('/workout-logs', clientController.getWorkoutLogs);
 
 // ---- Webhook Router ----
 const webhookRouter = express.Router();

@@ -270,8 +270,8 @@ async function createRoutine(req, res) {
 
     res.status(201).json({ message: 'Rutina creada', routine: fullRoutine });
   } catch (err) {
-  logger.error('Admin createRoutine error:', err);
-  res.status(500).json({ error: 'Error creando rutina: ' + err.message });
+    logger.error('Admin createRoutine error:', err);
+    res.status(500).json({ error: 'Error creando rutina' });
   }
 }
 
@@ -542,4 +542,103 @@ module.exports = {
   generateClientPaymentLink,
   getClientPayments,
   createClientSubscription,
+};
+
+// ============================================================
+// GET /admin/clients/alerts — Clientes con deuda o sin asistencia
+// ============================================================
+async function getClientAlerts(req, res) {
+  try {
+    const tenantId = req.tenantId;
+    const today = new Date().toISOString().split('T')[0];
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const [clientsRes, checkInsRes] = await Promise.all([
+      supabase.from('users')
+        .select('id, full_name, email, phone, subscriptions(id, status, end_date, amount)')
+        .eq('tenant_id', tenantId)
+        .eq('role', 'client')
+        .eq('status', 'active'),
+      supabase.from('check_ins')
+        .select('user_id, checked_in_at')
+        .eq('tenant_id', tenantId)
+        .gte('checked_in_at', fourteenDaysAgo),
+    ]);
+
+    const clients = clientsRes.data || [];
+    const checkIns = checkInsRes.data || [];
+
+    // Clientes con deuda (sin suscripción activa o vencida)
+    const withDebt = clients.filter(c => {
+      const activeSub = c.subscriptions?.find(s => s.status === 'active' && s.end_date >= today);
+      return !activeSub;
+    }).map(c => ({
+      ...c,
+      alert_type: 'debt',
+      alert_label: 'Sin suscripción activa',
+    }));
+
+    // Clientes sin asistencia en 7 días
+    const activeClientIds = new Set(checkIns.filter(ci => ci.checked_in_at >= sevenDaysAgo).map(ci => ci.user_id));
+    const withoutAttendance = clients.filter(c => {
+      const hasSub = c.subscriptions?.find(s => s.status === 'active' && s.end_date >= today);
+      return hasSub && !activeClientIds.has(c.id);
+    }).map(c => ({
+      ...c,
+      alert_type: 'no_attendance',
+      alert_label: 'Sin asistencia hace +7 días',
+    }));
+
+    res.json({
+      debt: withDebt,
+      no_attendance: withoutAttendance,
+      total_alerts: withDebt.length + withoutAttendance.length,
+    });
+  } catch (err) {
+    logger.error('getClientAlerts error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ============================================================
+// GET /admin/stats/monthly — Comparativa ingresos mes actual vs anterior
+// ============================================================
+async function getMonthlyStats(req, res) {
+  try {
+    const tenantId = req.tenantId;
+    const now = new Date();
+
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString();
+
+    const [thisMonth, lastMonth, newClientsThis, newClientsLast] = await Promise.all([
+      supabase.from('payments').select('amount').eq('tenant_id', tenantId).eq('type', 'gym_client').eq('status', 'approved').gte('created_at', thisMonthStart),
+      supabase.from('payments').select('amount').eq('tenant_id', tenantId).eq('type', 'gym_client').eq('status', 'approved').gte('created_at', lastMonthStart).lte('created_at', lastMonthEnd),
+      supabase.from('users').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('role', 'client').gte('created_at', thisMonthStart),
+      supabase.from('users').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('role', 'client').gte('created_at', lastMonthStart).lte('created_at', lastMonthEnd),
+    ]);
+
+    const thisRevenue = (thisMonth.data || []).reduce((s, p) => s + parseFloat(p.amount), 0);
+    const lastRevenue = (lastMonth.data || []).reduce((s, p) => s + parseFloat(p.amount), 0);
+    const diff = lastRevenue > 0 ? Math.round(((thisRevenue - lastRevenue) / lastRevenue) * 100) : 0;
+
+    res.json({
+      this_month: { revenue: thisRevenue, new_clients: newClientsThis.count || 0 },
+      last_month: { revenue: lastRevenue, new_clients: newClientsLast.count || 0 },
+      revenue_diff_pct: diff,
+      is_growing: thisRevenue >= lastRevenue,
+    });
+  } catch (err) {
+    logger.error('getMonthlyStats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = {
+  getDashboard, getClients, createClient, updateClient,
+  createClientSubscription, generateClientPaymentLink, getClientPayments,
+  getRoutines, getRoutineById, createRoutine, updateRoutine, deleteRoutine, assignRoutine,
+  getClientAlerts, getMonthlyStats,
 };

@@ -37,4 +37,8 @@ router.put('/settings', settingsController.updateSettings);
 router.post('/settings/mercadopago', settingsController.saveMercadoPagoCredentials);
 router.delete('/settings/mercadopago', settingsController.removeMercadoPagoCredentials);
 
+// Alertas y stats
+router.get('/clients/alerts', adminController.getClientAlerts);
+router.get('/stats/monthly', adminController.getMonthlyStats);
+
 module.exports = router;

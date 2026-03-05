@@ -270,8 +270,8 @@ async function createRoutine(req, res) {
 
     res.status(201).json({ message: 'Rutina creada', routine: fullRoutine });
   } catch (err) {
-    logger.error('Admin createRoutine error:', err);
-    res.status(500).json({ error: 'Error creando rutina' });
+  logger.error('Admin createRoutine error:', err);
+  res.status(500).json({ error: 'Error creando rutina: ' + err.message });
   }
 }
 

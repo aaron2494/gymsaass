@@ -199,6 +199,7 @@ async function register(req, res) {
   }
 }
 
+
 // ============================================================
 // GET /public/register/status/:externalRef — Verificar si el pago fue aprobado
 // Polling desde la app para saber cuándo activar el acceso
@@ -228,5 +229,60 @@ async function checkRegistrationStatus(req, res) {
     res.status(500).json({ error: 'Error verificando estado' });
   }
 }
+// POST /public/activate — activar cuenta cuando el webhook no llegó
+async function activateAfterPayment(req, res) {
+  try {
+    const { external_reference } = req.body;
 
-module.exports = { getPlans, register, checkRegistrationStatus };
+    const { data: payment } = await supabase
+      .from('payments')
+      .select('*, tenants(status)')
+      .eq('mp_external_reference', external_reference)
+      .single();
+
+    if (!payment) return res.status(404).json({ error: 'Pago no encontrado' });
+    if (payment.tenants?.status === 'active') {
+      return res.json({ already_active: true });
+    }
+
+    // Verificar con MercadoPago si el pago está aprobado
+    const mpService = require('../services/mercadopago');
+    
+    // Buscar el pago por external_reference en MP
+    const { data: mpPayments } = await supabase
+      .from('payments')
+      .select('mp_payment_id')
+      .eq('mp_external_reference', external_reference)
+      .not('mp_payment_id', 'is', null)
+      .single();
+
+    if (mpPayments?.mp_payment_id) {
+      const mpPayment = await mpService.getPaymentInfo(mpPayments.mp_payment_id);
+      if (mpPayment.status !== 'approved') {
+        return res.json({ pending: true, mp_status: mpPayment.status });
+      }
+    }
+
+    // Activar el tenant
+    await supabase.from('tenants')
+      .update({ status: 'active' })
+      .eq('id', payment.tenant_id);
+
+    await supabase.from('payments')
+      .update({ status: 'approved' })
+      .eq('mp_external_reference', external_reference);
+
+    await supabase.from('subscriptions')
+      .update({ status: 'active' })
+      .eq('tenant_id', payment.tenant_id)
+      .eq('type', 'saas');
+
+    res.json({ activated: true });
+  } catch (err) {
+    logger.error('activateAfterPayment error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { getPlans, register, checkRegistrationStatus, activateAfterPayment };
+

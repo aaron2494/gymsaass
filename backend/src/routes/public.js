@@ -9,7 +9,7 @@ const registerLimiter = rateLimit({
   max: 5,
   message: { error: 'Demasiados intentos. Intentá en 1 hora.' },
 });
-
+router.post('/activate', publicController.activateAfterPayment);
 router.get('/plans', publicController.getPlans);
 router.post('/register', registerLimiter, publicController.register);
 router.get('/register/status/:externalRef', publicController.checkRegistrationStatus);

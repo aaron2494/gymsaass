@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/adminController');
+const settingsController = require('../controllers/settingsController');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { validate, schemas } = require('../middleware/validate');
 
@@ -29,5 +30,11 @@ router.delete('/routines/:routineId', adminController.deleteRoutine);
 
 // Asignar rutina
 router.post('/routines/assign', validate(schemas.assignRoutine), adminController.assignRoutine);
+
+// Configuración del gimnasio
+router.get('/settings', settingsController.getSettings);
+router.put('/settings', settingsController.updateSettings);
+router.post('/settings/mercadopago', settingsController.saveMercadoPagoCredentials);
+router.delete('/settings/mercadopago', settingsController.removeMercadoPagoCredentials);
 
 module.exports = router;

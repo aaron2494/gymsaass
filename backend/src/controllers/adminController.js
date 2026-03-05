@@ -379,23 +379,34 @@ async function assignRoutine(req, res) {
 
 // ============================================================
 // GENERAR LINK DE PAGO PARA CLIENTE
+// El pago va directo a la cuenta MP del gimnasio
 // ============================================================
 async function generateClientPaymentLink(req, res) {
   try {
     const tenantId = req.tenantId;
     const { user_id, amount, description } = req.body;
 
-    // Verificar que el cliente pertenece a este tenant
-    const { data: client } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', user_id)
-      .eq('tenant_id', tenantId)
-      .eq('role', 'client')
-      .single();
+    // Obtener cliente y datos del tenant (incluyendo credenciales MP)
+    const [clientRes, tenantRes] = await Promise.all([
+      supabase.from('users').select('*').eq('id', user_id).eq('tenant_id', tenantId).eq('role', 'client').single(),
+      supabase.from('tenants').select('name, mp_access_token, mp_configured, subscription_price').eq('id', tenantId).single(),
+    ]);
+
+    const client = clientRes.data;
+    const tenant = tenantRes.data;
 
     if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
 
+    // Verificar que el gym tiene MP configurado
+    if (!tenant?.mp_access_token || !tenant?.mp_configured) {
+      return res.status(400).json({
+        error: 'Tenés que configurar tu MercadoPago antes de generar links de pago.',
+        needs_mp_setup: true,
+      });
+    }
+
+    // Monto: usar el del request o el precio default del gym
+    const finalAmount = parseFloat(amount) || parseFloat(tenant.subscription_price) || 5000;
     const externalRef = `gym-${tenantId}-${user_id}-${Date.now()}`;
 
     // Registrar pago pendiente
@@ -405,7 +416,7 @@ async function generateClientPaymentLink(req, res) {
         tenant_id: tenantId,
         user_id,
         type: 'gym_client',
-        amount,
+        amount: finalAmount,
         currency: 'ARS',
         status: 'pending',
         mp_external_reference: externalRef,
@@ -413,25 +424,41 @@ async function generateClientPaymentLink(req, res) {
       .select()
       .single();
 
-    const preference = await mpService.createPaymentPreference({
-      tenantId,
-      userId: user_id,
-      amount,
-      currency: 'ARS',
-      description: description || 'Suscripción mensual gimnasio',
-      externalReference: externalRef,
+    // Crear preferencia con las credenciales del GIMNASIO (no del SaaS)
+    const { MercadoPagoConfig, Preference } = require('mercadopago');
+    const gymMpClient = new MercadoPagoConfig({ accessToken: tenant.mp_access_token });
+    const gymPreference = new Preference(gymMpClient);
+
+    const preference = await gymPreference.create({
+      body: {
+        items: [{
+          title: description || `Suscripción mensual — ${tenant.name}`,
+          quantity: 1,
+          unit_price: finalAmount,
+          currency_id: 'ARS',
+        }],
+        payer: {
+          name: client.full_name,
+          email: client.email,
+        },
+        external_reference: externalRef,
+        payment_methods: { installments: 1 },
+        ...(process.env.NODE_ENV !== 'development' && {
+          notification_url: `${process.env.BACKEND_URL}/webhooks/mercadopago`,
+        }),
+      },
     });
 
     await supabase.from('payments').update({ mp_preference_id: preference.id }).eq('id', payment.id);
 
     res.json({
       payment_url: preference.init_point,
-      sandbox_url: preference.sandbox_init_point,
       external_reference: externalRef,
+      amount: finalAmount,
     });
   } catch (err) {
     logger.error('Admin generateClientPaymentLink error:', err);
-    res.status(500).json({ error: 'Error generando link de pago' });
+    res.status(500).json({ error: 'Error generando link de pago: ' + err.message });
   }
 }
 

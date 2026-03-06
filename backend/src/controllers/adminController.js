@@ -716,7 +716,7 @@ async function deleteClient(req, res) {
 // ============================================================
 // PATCH /admin/clients/:id/desactivate — Dar de baja (mantiene datos)
 // ============================================================
-async function desactivateClient(req, res) {
+async function deactivateClient(req, res) {
   try {
     const { id } = req.params;
     const tenantId = req.tenantId;
@@ -803,5 +803,5 @@ module.exports = {
   getDashboard, getClients, createClient, updateClient,
   createClientSubscription, generateClientPaymentLink, getClientPayments,
   getRoutines, getRoutineById, createRoutine, updateRoutine, deleteRoutine, assignRoutine,
-  getClientAlerts, getMonthlyStats,desactivateClient,deleteClient
+  getClientAlerts, getMonthlyStats,deactivateClient,deleteClient
 };

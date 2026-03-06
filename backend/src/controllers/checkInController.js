@@ -36,7 +36,21 @@ async function selfCheckIn(req, res) {
 
     if (error) throw error;
 
-    res.status(201).json({ message: '¡Asistencia registrada! 💪', check_in: data });
+    // Verificar logros de check-in
+    const newAchievements = [];
+    try {
+      const { count } = await supabase.from('check_ins').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('tenant_id', tenantId);
+      const achievementKeys = [];
+      if (count === 1)   achievementKeys.push('first_checkin');
+      if (count >= 30)   achievementKeys.push('checkins_30');
+      if (count >= 100)  achievementKeys.push('checkins_100');
+      for (const key of achievementKeys) {
+        const { error: ae } = await supabase.from('achievements').insert({ user_id: userId, tenant_id: tenantId, achievement_key: key });
+        if (!ae) newAchievements.push(key);
+      }
+    } catch (_) {}
+
+    res.status(201).json({ message: '¡Asistencia registrada! 💪', check_in: data, new_achievements: newAchievements });
   } catch (err) {
     logger.error('selfCheckIn error:', err);
     res.status(500).json({ error: 'Error registrando asistencia' });
@@ -133,7 +147,7 @@ async function getGymAttendance(req, res) {
       .from('check_ins')
       .select(`
         id, checked_in_at,
-        users!check_ins_user_id_fkey(id, full_name, email)
+        users(id, full_name, email)
       `)
       .eq('tenant_id', tenantId)
       .gte('checked_in_at', fromDate.toISOString())
@@ -167,7 +181,7 @@ async function getGymAttendance(req, res) {
     });
   } catch (err) {
     logger.error('getGymAttendance error:', err);
-    res.status(500).json({ error: err.message, detail: err.details || err.hint });
+    res.status(500).json({ error: 'Error obteniendo asistencia' });
   }
 }
 

@@ -773,10 +773,18 @@ async function deleteClient(req, res) {
     if (findError || !user) return res.status(404).json({ error: 'Cliente no encontrado' });
 
     // Eliminar de la tabla users (cascadea a subscriptions, payments, etc.)
-    const { error } = await supabase
-      .from('users')
-      .delete()
-      .eq('id', id);
+  // Eliminar datos relacionados primero
+await supabase.from('payments').delete().eq('user_id', id);
+await supabase.from('subscriptions').delete().eq('user_id', id);
+await supabase.from('check_ins').delete().eq('user_id', id);
+await supabase.from('user_routines').delete().eq('user_id', id);
+await supabase.from('workout_logs').delete().eq('user_id', id);
+
+// Ahora sí eliminar el usuario
+const { error } = await supabase
+  .from('users')
+  .delete()
+  .eq('id', id);
 
     if (error) throw error;
 

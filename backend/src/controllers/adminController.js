@@ -8,65 +8,90 @@ const mpService = require('../services/mercadopago');
 async function getDashboard(req, res) {
   try {
     const tenantId = req.tenantId;
-
-    const today = new Date();
-    const in7Days = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).toISOString();
+    const in3Days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     const [
-      { count: totalClients },
+      checkInsToday,
+      checkInsYesterday,
+      urgentExpiring,
+      todayPayments,
       { count: activeClients },
-      { data: expiringSubscriptions },
-      { data: recentClients },
+      { count: totalClients },
     ] = await Promise.all([
-      supabase.from('users')
-        .select('*', { count: 'exact', head: true })
+      // Check-ins de hoy
+      supabase.from('check_ins')
+        .select('id, checked_in_at, users!check_ins_user_id_fkey(id, full_name)')
         .eq('tenant_id', tenantId)
-        .eq('role', 'client'),
+        .gte('checked_in_at', todayStart)
+        .order('checked_in_at', { ascending: false }),
+
+      // Check-ins de ayer (para comparar)
+      supabase.from('check_ins')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .gte('checked_in_at', yesterdayStart)
+        .lt('checked_in_at', todayStart),
+
+      // Vencen en 3 días o menos — URGENTE
+      supabase.from('subscriptions')
+        .select('id, end_date, amount, users!subscriptions_user_id_fkey(id, full_name, phone)')
+        .eq('tenant_id', tenantId)
+        .eq('type', 'gym_client')
+        .eq('status', 'active')
+        .lte('end_date', in3Days)
+        .gte('end_date', todayStr)
+        .order('end_date', { ascending: true }),
+
+      // Cobros aprobados hoy
+      supabase.from('payments')
+        .select('id, amount, users!payments_user_id_fkey(full_name)')
+        .eq('tenant_id', tenantId)
+        .eq('type', 'gym_client')
+        .eq('status', 'approved')
+        .gte('created_at', todayStart),
+
+      // Clientes activos
       supabase.from('users')
         .select('*', { count: 'exact', head: true })
         .eq('tenant_id', tenantId)
         .eq('role', 'client')
         .eq('status', 'active'),
-      supabase.from('subscriptions')
-        .select('*, users(full_name, email, phone)')
-        .eq('tenant_id', tenantId)
-        .eq('type', 'gym_client')
-        .eq('status', 'active')
-        .lte('end_date', in7Days.toISOString().split('T')[0])
-        .order('end_date', { ascending: true }),
+
+      // Total clientes
       supabase.from('users')
-        .select('id, full_name, email, created_at')
+        .select('*', { count: 'exact', head: true })
         .eq('tenant_id', tenantId)
-        .eq('role', 'client')
-        .order('created_at', { ascending: false })
-        .limit(5),
+        .eq('role', 'client'),
     ]);
 
-    // Ingresos del mes actual (pagos gym_client)
-    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const { data: monthPayments } = await supabase
-      .from('payments')
-      .select('amount')
-      .eq('tenant_id', tenantId)
-      .eq('type', 'gym_client')
-      .eq('status', 'approved')
-      .gte('payment_date', firstDayOfMonth.toISOString());
-
-    const monthlyRevenue = monthPayments?.reduce((sum, p) => sum + parseFloat(p.amount), 0) || 0;
+    const todayRevenue = (todayPayments.data || []).reduce((s, p) => s + parseFloat(p.amount), 0);
+    const todayCI = checkInsToday.data?.length || 0;
+    const yesterdayCI = checkInsYesterday.count || 0;
 
     res.json({
-      metrics: {
-        total_clients: totalClients || 0,
-        active_clients: activeClients || 0,
-        monthly_revenue: monthlyRevenue,
-        expiring_count: expiringSubscriptions?.length || 0,
+      today: {
+        check_ins: checkInsToday.data || [],
+        check_ins_count: todayCI,
+        check_ins_vs_yesterday: todayCI - yesterdayCI,
+        revenue: todayRevenue,
+        payments: todayPayments.data || [],
       },
-      expiring_subscriptions: expiringSubscriptions || [],
-      recent_clients: recentClients || [],
+      urgent: {
+        expiring: urgentExpiring.data || [],
+        expiring_count: urgentExpiring.data?.length || 0,
+      },
+      summary: {
+        active_clients: activeClients || 0,
+        total_clients: totalClients || 0,
+      },
     });
   } catch (err) {
     logger.error('Admin getDashboard error:', err);
-    res.status(500).json({ error: 'Error obteniendo dashboard' });
+    res.status(500).json({ error: 'Error obteniendo dashboard: ' + err.message });
   }
 }
 

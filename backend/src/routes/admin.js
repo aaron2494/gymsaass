@@ -39,8 +39,13 @@ router.delete('/settings/mercadopago', settingsController.removeMercadoPagoCrede
 
 // Alertas y stats
 router.get('/clients/alerts', adminController.getClientAlerts);
+router.get('/clients/ranking', adminController.getClientRanking);
 router.get('/stats/monthly', adminController.getMonthlyStats);
 router.patch('/clients/:id/deactivate', adminController.deactivateClient);
 router.delete('/clients/:id', adminController.deleteClient);
+router.get('/clients/:id/notes', adminController.getClientNotes);
+router.post('/clients/:id/notes', adminController.addClientNote);
+router.delete('/clients/:id/notes/:noteId', adminController.deleteClientNote);
+router.post('/clients/payment-link-whatsapp', adminController.paymentLinkAndWhatsApp);
 
 module.exports = router;

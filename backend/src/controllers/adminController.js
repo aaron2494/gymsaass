@@ -660,10 +660,11 @@ async function getMonthlyStats(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
+
 // ============================================================
-// PATCH /admin/clients/:id/desactivate — Dar de baja (mantiene datos)
+// PATCH /admin/clients/:id/deactivate — Dar de baja (mantiene datos)
 // ============================================================
-async function desactivateClient(req, res) {
+async function deactivateClient(req, res) {
   try {
     const { id } = req.params;
     const tenantId = req.tenantId;
@@ -738,95 +739,209 @@ async function deleteClient(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
-// ============================================================
-// PATCH /admin/clients/:id/desactivate — Dar de baja (mantiene datos)
-// ============================================================
-async function deactivateClient(req, res) {
-  try {
-    const { id } = req.params;
-    const tenantId = req.tenantId;
 
-    // Verificar que el cliente pertenece a este tenant
-    const { data: user, error: findError } = await supabase
-      .from('users')
-      .select('id, full_name')
-      .eq('id', id)
-      .eq('tenant_id', tenantId)
-      .eq('role', 'client')
-      .single();
-
-    if (findError || !user) return res.status(404).json({ error: 'Cliente no encontrado' });
-
-    // Desactivar usuario
-    const { error } = await supabase
-      .from('users')
-      .update({ status: 'inactive' })
-      .eq('id', id);
-
-    if (error) throw error;
-
-    // Cancelar suscripciones activas
-    await supabase
-      .from('subscriptions')
-      .update({ status: 'cancelled' })
-      .eq('user_id', id)
-      .eq('status', 'active');
-
-    res.json({ message: `Cliente ${user.full_name} dado de baja` });
-  } catch (err) {
-    logger.error('deactivateClient error:', err);
-    res.status(500).json({ error: err.message });
-  }
-}
-
-// ============================================================
-// DELETE /admin/clients/:id — Eliminar permanentemente
-// ============================================================
-async function deleteClient(req, res) {
-  try {
-    const { id } = req.params;
-    const tenantId = req.tenantId;
-
-    const { data: user, error: findError } = await supabase
-      .from('users')
-      .select('id, full_name, auth_id')
-      .eq('id', id)
-      .eq('tenant_id', tenantId)
-      .eq('role', 'client')
-      .single();
-
-    if (findError || !user) return res.status(404).json({ error: 'Cliente no encontrado' });
-
-    // Eliminar de la tabla users (cascadea a subscriptions, payments, etc.)
-  // Eliminar datos relacionados primero
-await supabase.from('payments').delete().eq('user_id', id);
-await supabase.from('subscriptions').delete().eq('user_id', id);
-await supabase.from('check_ins').delete().eq('user_id', id);
-await supabase.from('user_routines').delete().eq('user_id', id);
-await supabase.from('workout_logs').delete().eq('user_id', id);
-
-// Ahora sí eliminar el usuario
-const { error } = await supabase
-  .from('users')
-  .delete()
-  .eq('id', id);
-
-    if (error) throw error;
-
-    // Eliminar de Supabase Auth
-    if (user.auth_id) {
-      await supabase.auth.admin.deleteUser(user.auth_id).catch(() => {});
-    }
-
-    res.json({ message: `Cliente ${user.full_name} eliminado` });
-  } catch (err) {
-    logger.error('deleteClient error:', err);
-    res.status(500).json({ error: err.message });
-  }
-}
 module.exports = {
   getDashboard, getClients, createClient, updateClient,
   createClientSubscription, generateClientPaymentLink, getClientPayments,
   getRoutines, getRoutineById, createRoutine, updateRoutine, deleteRoutine, assignRoutine,
-  getClientAlerts, getMonthlyStats,deactivateClient,deleteClient
+  getClientAlerts, getMonthlyStats, deactivateClient, deleteClient,
+  getClientNotes, addClientNote, deleteClientNote,
+  getClientRanking, paymentLinkAndWhatsApp,
 };
+
+// ============================================================
+// GET /admin/clients/:id/notes — Notas del admin sobre un cliente
+// ============================================================
+async function getClientNotes(req, res) {
+  try {
+    const tenantId = req.tenantId;
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from('client_notes')
+      .select('id, content, created_at, admin_id, users!client_notes_admin_id_fkey(full_name)')
+      .eq('user_id', id)
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: false })
+      .limit(30);
+
+    if (error) throw error;
+    res.json({ notes: data || [] });
+  } catch (err) {
+    logger.error('getClientNotes error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ============================================================
+// POST /admin/clients/:id/notes — Agregar nota sobre cliente
+// ============================================================
+async function addClientNote(req, res) {
+  try {
+    const tenantId = req.tenantId;
+    const adminId  = req.user.id;
+    const { id }   = req.params;
+    const { content } = req.body;
+
+    if (!content?.trim()) return res.status(400).json({ error: 'Contenido requerido' });
+
+    const { data, error } = await supabase
+      .from('client_notes')
+      .insert({ user_id: id, tenant_id: tenantId, admin_id: adminId, content: content.trim() })
+      .select('id, content, created_at')
+      .single();
+
+    if (error) throw error;
+    res.status(201).json({ note: data });
+  } catch (err) {
+    logger.error('addClientNote error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ============================================================
+// DELETE /admin/clients/:id/notes/:noteId — Eliminar nota
+// ============================================================
+async function deleteClientNote(req, res) {
+  try {
+    const tenantId = req.tenantId;
+    const { id, noteId } = req.params;
+
+    const { error } = await supabase
+      .from('client_notes')
+      .delete()
+      .eq('id', noteId)
+      .eq('user_id', id)
+      .eq('tenant_id', tenantId);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    logger.error('deleteClientNote error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ============================================================
+// GET /admin/clients/ranking — Ranking de clientes más activos
+// ============================================================
+async function getClientRanking(req, res) {
+  try {
+    const tenantId = req.tenantId;
+    const { days = 30 } = req.query;
+
+    const fromDate = new Date(Date.now() - parseInt(days) * 86400000).toISOString();
+
+    const [clientsRes, checkInsRes, workoutsRes] = await Promise.all([
+      supabase.from('users')
+        .select('id, full_name, email, phone, status, created_at')
+        .eq('tenant_id', tenantId)
+        .eq('role', 'client')
+        .eq('status', 'active'),
+
+      supabase.from('check_ins')
+        .select('user_id')
+        .eq('tenant_id', tenantId)
+        .gte('checked_in_at', fromDate),
+
+      supabase.from('workout_logs')
+        .select('user_id')
+        .eq('tenant_id', tenantId)
+        .gte('logged_at', fromDate),
+    ]);
+
+    const clients  = clientsRes.data  || [];
+    const checkIns = checkInsRes.data || [];
+    const workouts = workoutsRes.data || [];
+
+    // Contar por usuario
+    const ciCount  = {};
+    const wkCount  = {};
+    for (const ci of checkIns) ciCount[ci.user_id] = (ciCount[ci.user_id] || 0) + 1;
+    for (const wk of workouts) wkCount[wk.user_id] = (wkCount[wk.user_id] || 0) + 1;
+
+    // Score = check-ins * 1 + workouts * 2 (workout vale más porque implica más engagement)
+    const ranked = clients.map(c => ({
+      ...c,
+      check_ins:  ciCount[c.id] || 0,
+      workouts:   wkCount[c.id] || 0,
+      score:      (ciCount[c.id] || 0) + (wkCount[c.id] || 0) * 2,
+    })).sort((a, b) => b.score - a.score);
+
+    // Detectar en riesgo: tienen suscripción activa pero score = 0 en los últimos 14 días
+    const at_risk = ranked.filter(c => c.score === 0);
+
+    res.json({
+      ranking: ranked.slice(0, 20),
+      at_risk: at_risk.slice(0, 10),
+      period_days: parseInt(days),
+      total_active: clients.length,
+    });
+  } catch (err) {
+    logger.error('getClientRanking error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ============================================================
+// POST /admin/clients/payment-link-whatsapp — Link + WhatsApp en 1 gesto
+// ============================================================
+async function paymentLinkAndWhatsApp(req, res) {
+  try {
+    const tenantId = req.tenantId;
+    const { user_id, amount, description } = req.body;
+
+    // Reusar la lógica de generateClientPaymentLink pero devolver también datos para WhatsApp
+    const [clientRes, tenantRes] = await Promise.all([
+      supabase.from('users').select('*').eq('id', user_id).eq('tenant_id', tenantId).eq('role', 'client').single(),
+      supabase.from('tenants').select('name, mp_access_token, mp_configured, subscription_price').eq('id', tenantId).single(),
+    ]);
+
+    const client = clientRes.data;
+    const tenant = tenantRes.data;
+
+    if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    if (!tenant?.mp_access_token || !tenant?.mp_configured) {
+      return res.status(400).json({ error: 'Configurá MercadoPago primero', needs_mp_setup: true });
+    }
+
+    const finalAmount = parseFloat(amount) || parseFloat(tenant.subscription_price) || 5000;
+    const externalRef = `gym-${tenantId}-${user_id}-${Date.now()}`;
+
+    const { data: payment } = await supabase.from('payments')
+      .insert({ tenant_id: tenantId, user_id, type: 'gym_client', amount: finalAmount, currency: 'ARS', status: 'pending', mp_external_reference: externalRef })
+      .select().single();
+
+    const { MercadoPagoConfig, Preference } = require('mercadopago');
+    const gymMpClient = new MercadoPagoConfig({ accessToken: tenant.mp_access_token });
+    const preference = await new Preference(gymMpClient).create({
+      body: {
+        items: [{ title: description || `Suscripción mensual — ${tenant.name}`, quantity: 1, unit_price: finalAmount, currency_id: 'ARS' }],
+        payer: { name: client.full_name, email: client.email },
+        external_reference: externalRef,
+        payment_methods: { installments: 1 },
+        ...(process.env.NODE_ENV !== 'development' && { notification_url: `${process.env.BACKEND_URL}/webhooks/mercadopago` }),
+      },
+    });
+
+    await supabase.from('payments').update({ mp_preference_id: preference.id }).eq('id', payment.id);
+
+    // Armar el mensaje WhatsApp listo para enviar
+    const firstName = client.full_name?.split(' ')[0] || 'cliente';
+    const whatsappMsg = `Hola ${firstName}! 👋 Te mando el link para renovar tu suscripción en ${tenant.name}:\n\n${preference.init_point}\n\n¡Gracias! 💪`;
+
+    res.json({
+      payment_url: preference.init_point,
+      amount: finalAmount,
+      whatsapp_phone: client.phone?.replace(/\D/g, ''),
+      whatsapp_msg: whatsappMsg,
+      whatsapp_url: client.phone
+        ? `https://wa.me/${client.phone.replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`
+        : null,
+    });
+  } catch (err) {
+    logger.error('paymentLinkAndWhatsApp error:', err);
+    res.status(500).json({ error: 'Error generando link: ' + err.message });
+  }
+}

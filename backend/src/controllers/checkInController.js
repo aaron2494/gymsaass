@@ -133,7 +133,7 @@ async function getGymAttendance(req, res) {
       .from('check_ins')
       .select(`
         id, checked_in_at,
-        users(id, full_name, email)
+        users!check_ins_user_id_fkey(id, full_name, email)
       `)
       .eq('tenant_id', tenantId)
       .gte('checked_in_at', fromDate.toISOString())

@@ -635,10 +635,165 @@ async function getMonthlyStats(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
+// ============================================================
+// PATCH /admin/clients/:id/desactivate — Dar de baja (mantiene datos)
+// ============================================================
+async function desactivateClient(req, res) {
+  try {
+    const { id } = req.params;
+    const tenantId = req.tenantId;
 
+    // Verificar que el cliente pertenece a este tenant
+    const { data: user, error: findError } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .eq('role', 'client')
+      .single();
+
+    if (findError || !user) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    // Desactivar usuario
+    const { error } = await supabase
+      .from('users')
+      .update({ status: 'inactive' })
+      .eq('id', id);
+
+    if (error) throw error;
+
+    // Cancelar suscripciones activas
+    await supabase
+      .from('subscriptions')
+      .update({ status: 'cancelled' })
+      .eq('user_id', id)
+      .eq('status', 'active');
+
+    res.json({ message: `Cliente ${user.full_name} dado de baja` });
+  } catch (err) {
+    logger.error('deactivateClient error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ============================================================
+// DELETE /admin/clients/:id — Eliminar permanentemente
+// ============================================================
+async function deleteClient(req, res) {
+  try {
+    const { id } = req.params;
+    const tenantId = req.tenantId;
+
+    const { data: user, error: findError } = await supabase
+      .from('users')
+      .select('id, full_name, auth_id')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .eq('role', 'client')
+      .single();
+
+    if (findError || !user) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    // Eliminar de la tabla users (cascadea a subscriptions, payments, etc.)
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    // Eliminar de Supabase Auth
+    if (user.auth_id) {
+      await supabase.auth.admin.deleteUser(user.auth_id).catch(() => {});
+    }
+
+    res.json({ message: `Cliente ${user.full_name} eliminado` });
+  } catch (err) {
+    logger.error('deleteClient error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+// ============================================================
+// PATCH /admin/clients/:id/desactivate — Dar de baja (mantiene datos)
+// ============================================================
+async function desactivateClient(req, res) {
+  try {
+    const { id } = req.params;
+    const tenantId = req.tenantId;
+
+    // Verificar que el cliente pertenece a este tenant
+    const { data: user, error: findError } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .eq('role', 'client')
+      .single();
+
+    if (findError || !user) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    // Desactivar usuario
+    const { error } = await supabase
+      .from('users')
+      .update({ status: 'inactive' })
+      .eq('id', id);
+
+    if (error) throw error;
+
+    // Cancelar suscripciones activas
+    await supabase
+      .from('subscriptions')
+      .update({ status: 'cancelled' })
+      .eq('user_id', id)
+      .eq('status', 'active');
+
+    res.json({ message: `Cliente ${user.full_name} dado de baja` });
+  } catch (err) {
+    logger.error('deactivateClient error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ============================================================
+// DELETE /admin/clients/:id — Eliminar permanentemente
+// ============================================================
+async function deleteClient(req, res) {
+  try {
+    const { id } = req.params;
+    const tenantId = req.tenantId;
+
+    const { data: user, error: findError } = await supabase
+      .from('users')
+      .select('id, full_name, auth_id')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .eq('role', 'client')
+      .single();
+
+    if (findError || !user) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    // Eliminar de la tabla users (cascadea a subscriptions, payments, etc.)
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    // Eliminar de Supabase Auth
+    if (user.auth_id) {
+      await supabase.auth.admin.deleteUser(user.auth_id).catch(() => {});
+    }
+
+    res.json({ message: `Cliente ${user.full_name} eliminado` });
+  } catch (err) {
+    logger.error('deleteClient error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
 module.exports = {
   getDashboard, getClients, createClient, updateClient,
   createClientSubscription, generateClientPaymentLink, getClientPayments,
   getRoutines, getRoutineById, createRoutine, updateRoutine, deleteRoutine, assignRoutine,
-  getClientAlerts, getMonthlyStats,
+  getClientAlerts, getMonthlyStats,desactivateClient,deleteClient
 };

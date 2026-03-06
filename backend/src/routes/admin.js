@@ -40,5 +40,7 @@ router.delete('/settings/mercadopago', settingsController.removeMercadoPagoCrede
 // Alertas y stats
 router.get('/clients/alerts', adminController.getClientAlerts);
 router.get('/stats/monthly', adminController.getMonthlyStats);
+router.patch('/clients/:id/desactivate', adminController.desactivateClient);
+router.delete('/clients/:id', adminController.deleteClient);
 
 module.exports = router;

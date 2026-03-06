@@ -167,7 +167,7 @@ async function getGymAttendance(req, res) {
     });
   } catch (err) {
     logger.error('getGymAttendance error:', err);
-    res.status(500).json({ error: 'Error obteniendo asistencia' });
+    res.status(500).json({ error: err.message, detail: err.details || err.hint });
   }
 }
 

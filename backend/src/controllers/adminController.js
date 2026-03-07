@@ -377,13 +377,13 @@ async function assignRoutine(req, res) {
       .eq('user_id', user_id)
       .eq('tenant_id', tenantId);
 
-    // Verificar si ya existe la asignación
+    // Verificar si ya existe la asignación (.maybeSingle no falla si no hay filas)
     const { data: existing } = await supabase
       .from('user_routines')
       .select('id')
       .eq('user_id', user_id)
       .eq('routine_id', routine_id)
-      .single();
+      .maybeSingle();
 
     let assignment;
     if (existing) {

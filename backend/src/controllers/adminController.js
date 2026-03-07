@@ -468,7 +468,7 @@ async function generateClientPaymentLink(req, res) {
         },
         external_reference: externalRef,
         payment_methods: { installments: 1 },
-        ...(process.env.NODE_ENV !== 'development' && {
+        ...(process.env.BACKEND_URL && {
           notification_url: `${process.env.BACKEND_URL}/webhooks/mercadopago`,
         }),
       },
@@ -719,11 +719,7 @@ async function deleteClient(req, res) {
       .single();
 
     if (findError || !user) return res.status(404).json({ error: 'Cliente no encontrado' });
-await supabase.from('payments').delete().eq('user_id', id);
-await supabase.from('subscriptions').delete().eq('user_id', id);
-await supabase.from('check_ins').delete().eq('user_id', id);
-await supabase.from('user_routines').delete().eq('user_id', id);
-await supabase.from('workout_logs').delete().eq('user_id', id);
+
     // Eliminar de la tabla users (cascadea a subscriptions, payments, etc.)
     const { error } = await supabase
       .from('users')
@@ -750,7 +746,7 @@ module.exports = {
   getRoutines, getRoutineById, createRoutine, updateRoutine, deleteRoutine, assignRoutine,
   getClientAlerts, getMonthlyStats, deactivateClient, deleteClient,
   getClientNotes, addClientNote, deleteClientNote,
-  getClientRanking, paymentLinkAndWhatsApp,
+  getClientRanking, paymentLinkAndWhatsApp, syncClientPayment,
 };
 
 // ============================================================
@@ -925,7 +921,7 @@ async function paymentLinkAndWhatsApp(req, res) {
         payer: { name: client.full_name, email: client.email },
         external_reference: externalRef,
         payment_methods: { installments: 1 },
-        ...(process.env.NODE_ENV !== 'development' && { notification_url: `${process.env.BACKEND_URL}/webhooks/mercadopago` }),
+        ...(process.env.BACKEND_URL && { notification_url: `${process.env.BACKEND_URL}/webhooks/mercadopago` }),
       },
     });
 
@@ -948,4 +944,114 @@ async function paymentLinkAndWhatsApp(req, res) {
     logger.error('paymentLinkAndWhatsApp error:', err);
     res.status(500).json({ error: 'Error generando link: ' + err.message });
   }
+}
+
+// ============================================================
+// POST /admin/clients/:id/sync-payment — Sincronizar pago manualmente
+// Verifica el último pago pendiente contra MP y activa la suscripción
+// ============================================================
+async function syncClientPayment(req, res) {
+  try {
+    const tenantId = req.tenantId;
+    const { id: userId } = req.params;
+
+    // Buscar el último pago pendiente o aprobado del cliente
+    const { data: payment, error: pErr } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('tenant_id', tenantId)
+      .eq('type', 'gym_client')
+      .in('status', ['pending', 'in_process', 'approved'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (pErr || !payment) {
+      return res.status(404).json({ error: 'No hay pagos pendientes para este cliente' });
+    }
+
+    // Si ya está aprobado en nuestra DB, solo activar suscripción
+    if (payment.status === 'approved') {
+      await activateGymClientSubscription(payment);
+      return res.json({ message: 'Suscripción activada', status: 'approved' });
+    }
+
+    // Si tiene mp_payment_id, consultar MP directamente
+    if (payment.mp_payment_id) {
+      const { MercadoPagoConfig, Payment } = require('mercadopago');
+      const { data: tenantData } = await supabase
+        .from('tenants')
+        .select('mp_access_token')
+        .eq('id', tenantId)
+        .single();
+
+      if (!tenantData?.mp_access_token) {
+        return res.status(400).json({ error: 'MercadoPago no configurado' });
+      }
+
+      const mpClient  = new MercadoPagoConfig({ accessToken: tenantData.mp_access_token });
+      const mpPayment = await new Payment(mpClient).get({ id: payment.mp_payment_id });
+
+      if (mpPayment.status === 'approved') {
+        await supabase.from('payments').update({
+          status: 'approved',
+          payment_date: mpPayment.date_approved ? new Date(mpPayment.date_approved).toISOString() : new Date().toISOString(),
+        }).eq('id', payment.id);
+
+        await activateGymClientSubscription({ ...payment, status: 'approved' });
+        return res.json({ message: '✅ Pago verificado y suscripción activada', status: 'approved' });
+      }
+
+      return res.json({ message: `Pago en estado: ${mpPayment.status}`, status: mpPayment.status });
+    }
+
+    // Sin mp_payment_id — activar manualmente (el admin confirma el pago)
+    const { manual } = req.body;
+    if (manual) {
+      await supabase.from('payments').update({
+        status: 'approved',
+        payment_date: new Date().toISOString(),
+      }).eq('id', payment.id);
+
+      await activateGymClientSubscription({ ...payment, status: 'approved' });
+      return res.json({ message: '✅ Pago activado manualmente', status: 'approved' });
+    }
+
+    return res.json({ message: 'Pago pendiente sin confirmar', status: 'pending' });
+  } catch (err) {
+    logger.error('syncClientPayment error:', err);
+    res.status(500).json({ error: 'Error sincronizando pago: ' + err.message });
+  }
+}
+
+// Helper interno reutilizable
+async function activateGymClientSubscription(payment) {
+  const { tenant_id, user_id, amount } = payment;
+
+  // Expirar suscripciones anteriores
+  await supabase.from('subscriptions')
+    .update({ status: 'expired' })
+    .eq('user_id', user_id)
+    .eq('type', 'gym_client')
+    .eq('status', 'active');
+
+  // Crear nueva suscripción activa por 30 días
+  const startDate = new Date();
+  const endDate   = new Date();
+  endDate.setMonth(endDate.getMonth() + 1);
+
+  const { error } = await supabase.from('subscriptions').insert({
+    tenant_id,
+    user_id,
+    type: 'gym_client',
+    amount,
+    currency: 'ARS',
+    status: 'active',
+    start_date: startDate.toISOString().split('T')[0],
+    end_date:   endDate.toISOString().split('T')[0],
+  });
+
+  if (error) throw error;
+  logger.info(`Subscription activated for user ${user_id}`);
 }

@@ -44,8 +44,8 @@ async function handleWebhook(req, res) {
 
     logger.info('Webhook received:', { type, action, dataId: data?.id });
 
-    // Verificar firma (en producción siempre verificar)
-    if (process.env.NODE_ENV === 'production' && !verifyWebhookSignature(req)) {
+    // Verificar firma solo si MP_WEBHOOK_SECRET está configurado
+    if (process.env.MP_WEBHOOK_SECRET && !verifyWebhookSignature(req)) {
       logger.warn('Webhook signature verification failed');
       return;
     }

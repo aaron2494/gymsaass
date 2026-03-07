@@ -28,6 +28,27 @@ async function getProfile(req, res) {
 async function getMyRoutine(req, res) {
   try {
     const userId = req.user.id;
+    const tenantId = req.tenantId;
+
+    // Verificar suscripción activa
+    const today = new Date().toISOString().split('T')[0];
+    const { data: sub } = await supabase
+      .from('subscriptions')
+      .select('id, end_date')
+      .eq('user_id', userId)
+      .eq('tenant_id', tenantId)
+      .eq('type', 'gym_client')
+      .eq('status', 'active')
+      .gte('end_date', today)
+      .limit(1)
+      .single();
+
+    if (!sub) {
+      return res.status(403).json({
+        error: 'subscription_required',
+        message: 'Necesitás una suscripción activa para ver tu rutina.',
+      });
+    }
 
     const { data, error } = await supabase
       .from('user_routines')

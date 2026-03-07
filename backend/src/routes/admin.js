@@ -6,7 +6,11 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const { validate, schemas } = require('../middleware/validate');
 
 // Todas las rutas requieren ser admin
+const aiRoutineController = require('../controllers/aiRoutineController');
+
 router.use(authenticate, requireRole('admin', 'owner'));
+
+router.post('/ai-routine', aiRoutineController.generateRoutine);
 
 // Dashboard
 router.get('/dashboard', adminController.getDashboard);

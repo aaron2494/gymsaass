@@ -25,15 +25,13 @@ router.get('/clients/:clientId/payments', adminController.getClientPayments);
 router.post('/clients/subscription', validate(schemas.createSubscription), adminController.createClientSubscription);
 router.post('/clients/payment-link', adminController.generateClientPaymentLink);
 
-// Rutinas
+// Rutinas — assign ANTES de /:routineId para evitar conflicto de rutas
 router.get('/routines', adminController.getRoutines);
-router.get('/routines/:routineId', adminController.getRoutineById);
 router.post('/routines', validate(schemas.createRoutine), adminController.createRoutine);
+router.post('/routines/assign', validate(schemas.assignRoutine), adminController.assignRoutine);
+router.get('/routines/:routineId', adminController.getRoutineById);
 router.put('/routines/:routineId', adminController.updateRoutine);
 router.delete('/routines/:routineId', adminController.deleteRoutine);
-
-// Asignar rutina
-router.post('/routines/assign', validate(schemas.assignRoutine), adminController.assignRoutine);
 
 // Configuración del gimnasio
 router.get('/settings', settingsController.getSettings);

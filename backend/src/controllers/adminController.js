@@ -278,9 +278,17 @@ async function createRoutine(req, res) {
 
     if (exercises && exercises.length > 0) {
       const exercisesData = exercises.map((ex, idx) => ({
-        routine_id: routine.id,
-        ...ex,
-        order_index: ex.order_index ?? idx,
+        routine_id:   routine.id,
+        day_number:   ex.day_number   || 1,
+        name:         ex.name,
+        muscle_group: ex.muscle_group || '',
+        sets:         parseInt(ex.sets)         || 3,
+        reps:         String(ex.reps            || '10'),
+        rest_seconds: parseInt(ex.rest_seconds) || 60,
+        weight_kg:    ex.weight_kg    || null,
+        notes:        ex.notes        || null,
+        video_url:    ex.video_url    || null,
+        order_index:  ex.order_index  ?? idx,
       }));
 
       const { error: exError } = await supabase.from('exercises').insert(exercisesData);
@@ -719,11 +727,7 @@ async function deleteClient(req, res) {
       .single();
 
     if (findError || !user) return res.status(404).json({ error: 'Cliente no encontrado' });
-await supabase.from('payments').delete().eq('user_id', id);
-await supabase.from('subscriptions').delete().eq('user_id', id);
-await supabase.from('check_ins').delete().eq('user_id', id);
-await supabase.from('user_routines').delete().eq('user_id', id);
-await supabase.from('workout_logs').delete().eq('user_id', id);
+
     // Eliminar de la tabla users (cascadea a subscriptions, payments, etc.)
     const { error } = await supabase
       .from('users')

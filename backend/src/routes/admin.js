@@ -28,7 +28,7 @@ router.post('/clients/payment-link', adminController.generateClientPaymentLink);
 // Rutinas — assign ANTES de /:routineId para evitar conflicto de rutas
 router.get('/routines', adminController.getRoutines);
 router.post('/routines', validate(schemas.createRoutine), adminController.createRoutine);
-router.post('/routines/assign', validate(schemas.assignRoutine), adminController.assignRoutine);
+router.post('/routines/assign', adminController.assignRoutine);
 router.get('/routines/:routineId', adminController.getRoutineById);
 router.put('/routines/:routineId', adminController.updateRoutine);
 router.delete('/routines/:routineId', adminController.deleteRoutine);

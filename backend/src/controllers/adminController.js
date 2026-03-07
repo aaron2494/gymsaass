@@ -370,6 +370,16 @@ async function assignRoutine(req, res) {
     const tenantId = req.tenantId;
     const { user_id, routine_id, notes } = req.body;
 
+    logger.info('assignRoutine body:', JSON.stringify({ user_id, routine_id, notes }));
+
+    if (!user_id)    return res.status(400).json({ error: 'user_id requerido' });
+    if (!routine_id) return res.status(400).json({ error: 'routine_id requerido' });
+
+    // UUID básico regex
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRe.test(user_id))    return res.status(400).json({ error: `user_id inválido: "${user_id}"` });
+    if (!uuidRe.test(routine_id)) return res.status(400).json({ error: `routine_id inválido: "${routine_id}"` });
+
     // Desactivar rutinas anteriores del usuario
     await supabase
       .from('user_routines')

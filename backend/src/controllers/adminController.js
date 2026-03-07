@@ -370,7 +370,7 @@ async function assignRoutine(req, res) {
     const tenantId = req.tenantId;
     const { user_id, routine_id, notes } = req.body;
 
-    logger.info('assignRoutine body:', JSON.stringify({ user_id, routine_id, notes }));
+    logger.info('assignRoutine body: ' + JSON.stringify({ user_id, routine_id, notes }));
 
     if (!user_id)    return res.status(400).json({ error: 'user_id requerido' });
     if (!routine_id) return res.status(400).json({ error: 'routine_id requerido' });

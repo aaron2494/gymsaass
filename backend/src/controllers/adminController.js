@@ -368,14 +368,18 @@ async function deleteRoutine(req, res) {
 async function assignRoutine(req, res) {
   try {
     const tenantId = req.tenantId;
-    const { user_id, routine_id, notes } = req.body;
 
-    logger.info('assignRoutine body: ' + JSON.stringify({ user_id, routine_id, notes }));
+    // Aceptar user_id en distintos formatos por si el cliente manda distinto
+    const user_id    = req.body.user_id || req.body.userId || req.body.client_id;
+    const routine_id = req.body.routine_id || req.body.routineId;
+    const notes      = req.body.notes;
+
+    logger.info('assignRoutine body: ' + JSON.stringify(req.body));
+    logger.info('assignRoutine parsed: ' + JSON.stringify({ user_id, routine_id }));
 
     if (!user_id)    return res.status(400).json({ error: 'user_id requerido' });
     if (!routine_id) return res.status(400).json({ error: 'routine_id requerido' });
 
-    // UUID básico regex
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRe.test(user_id))    return res.status(400).json({ error: `user_id inválido: "${user_id}"` });
     if (!uuidRe.test(routine_id)) return res.status(400).json({ error: `routine_id inválido: "${routine_id}"` });

@@ -48,6 +48,7 @@ router.delete('/clients/:id', adminController.deleteClient);
 router.get('/clients/:id/notes', adminController.getClientNotes);
 router.post('/clients/:id/notes', adminController.addClientNote);
 router.delete('/clients/:id/notes/:noteId', adminController.deleteClientNote);
+router.get('/clients/:id/progress', adminController.getClientProgress);
 router.post('/clients/:id/sync-payment', adminController.syncClientPayment);
 router.post('/clients/payment-link-whatsapp', adminController.paymentLinkAndWhatsApp);
 

@@ -575,6 +575,64 @@ async function createClientSubscription(req, res) {
   }
 }
 
+
+// GET /admin/clients/:id/progress — Progreso de un cliente en su rutina
+// ============================================================
+async function getClientProgress(req, res) {
+  try {
+    const { id: clientId } = req.params;
+    const tenantId = req.tenantId;
+
+    // Últimos 20 entrenamientos del cliente
+    const { data: logs, error: logsErr } = await supabase
+      .from('workout_logs')
+      .select('id, routine_id, exercises_data, notes, duration_minutes, logged_at')
+      .eq('user_id', clientId)
+      .eq('tenant_id', tenantId)
+      .order('logged_at', { ascending: false })
+      .limit(20);
+
+    if (logsErr) throw logsErr;
+
+    // Stats agregadas
+    const totalWorkouts = logs.length;
+    const totalMinutes  = logs.reduce((s, l) => s + (l.duration_minutes || 0), 0);
+
+    // Última semana
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const thisWeek = logs.filter(l => new Date(l.logged_at) > oneWeekAgo).length;
+
+    // PRs del cliente
+    const { data: prs } = await supabase
+      .from('personal_records')
+      .select('exercise_name, weight_kg, reps, achieved_at')
+      .eq('user_id', clientId)
+      .order('achieved_at', { ascending: false })
+      .limit(10);
+
+    // Racha actual (días consecutivos con entrenamiento)
+    let streak = 0;
+    const logDays = [...new Set(logs.map(l => l.logged_at?.split('T')[0]))].sort().reverse();
+    for (let i = 0; i < logDays.length; i++) {
+      const expected = new Date();
+      expected.setDate(expected.getDate() - i);
+      const expectedStr = expected.toISOString().split('T')[0];
+      if (logDays[i] === expectedStr) streak++;
+      else break;
+    }
+
+    res.json({
+      stats: { total_workouts: totalWorkouts, total_minutes: totalMinutes, this_week: thisWeek, streak },
+      logs: logs || [],
+      prs: prs || [],
+    });
+  } catch (err) {
+    logger.error('getClientProgress error:', err);
+    res.status(500).json({ error: 'Error obteniendo progreso: ' + err.message });
+  }
+}
+
 module.exports = {
   getDashboard,
   getClients,
@@ -769,6 +827,7 @@ module.exports = {
   getClientAlerts, getMonthlyStats, deactivateClient, deleteClient,
   getClientNotes, addClientNote, deleteClientNote,
   getClientRanking, paymentLinkAndWhatsApp, syncClientPayment,
+  getClientProgress,
 };
 
 // ============================================================
@@ -1077,60 +1136,5 @@ async function activateGymClientSubscription(payment) {
   if (error) throw error;
   logger.info(`Subscription activated for user ${user_id}`);
 }
+
 // ============================================================
-// GET /admin/clients/:id/progress — Progreso de un cliente en su rutina
-// ============================================================
-async function getClientProgress(req, res) {
-  try {
-    const { id: clientId } = req.params;
-    const tenantId = req.tenantId;
-
-    // Últimos 20 entrenamientos del cliente
-    const { data: logs, error: logsErr } = await supabase
-      .from('workout_logs')
-      .select('id, routine_id, exercises_data, notes, duration_minutes, logged_at')
-      .eq('user_id', clientId)
-      .eq('tenant_id', tenantId)
-      .order('logged_at', { ascending: false })
-      .limit(20);
-
-    if (logsErr) throw logsErr;
-
-    // Stats agregadas
-    const totalWorkouts = logs.length;
-    const totalMinutes  = logs.reduce((s, l) => s + (l.duration_minutes || 0), 0);
-
-    // Última semana
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-    const thisWeek = logs.filter(l => new Date(l.logged_at) > oneWeekAgo).length;
-
-    // PRs del cliente
-    const { data: prs } = await supabase
-      .from('personal_records')
-      .select('exercise_name, weight_kg, reps, achieved_at')
-      .eq('user_id', clientId)
-      .order('achieved_at', { ascending: false })
-      .limit(10);
-
-    // Racha actual (días consecutivos con entrenamiento)
-    let streak = 0;
-    const logDays = [...new Set(logs.map(l => l.logged_at?.split('T')[0]))].sort().reverse();
-    for (let i = 0; i < logDays.length; i++) {
-      const expected = new Date();
-      expected.setDate(expected.getDate() - i);
-      const expectedStr = expected.toISOString().split('T')[0];
-      if (logDays[i] === expectedStr) streak++;
-      else break;
-    }
-
-    res.json({
-      stats: { total_workouts: totalWorkouts, total_minutes: totalMinutes, this_week: thisWeek, streak },
-      logs: logs || [],
-      prs: prs || [],
-    });
-  } catch (err) {
-    logger.error('getClientProgress error:', err);
-    res.status(500).json({ error: 'Error obteniendo progreso: ' + err.message });
-  }
-}

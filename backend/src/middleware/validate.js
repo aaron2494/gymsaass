@@ -100,6 +100,17 @@ const schemas = {
       tenantId: z.string().uuid(),
     }),
   }),
+  
+  exercises: z.array(z.object({
+  exercise_id: z.string().uuid().optional(),
+  name: z.string().min(1),
+  sets: z.array(z.object({
+    reps: z.union([z.string(), z.number()]).optional(),
+    weight: z.union([z.string(), z.number()]).optional(),
+    completed: z.boolean().default(false),
+  }))
+})).optional(),
 };
+
 
 module.exports = { validate, schemas };

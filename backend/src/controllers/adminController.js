@@ -490,9 +490,12 @@ async function generateClientPaymentLink(req, res) {
         },
         external_reference: externalRef,
         payment_methods: { installments: 1 },
-        ...(process.env.BACKEND_URL && {
-          notification_url: `${process.env.BACKEND_URL}/webhooks/mercadopago`,
-        }),
+        ...(() => {
+          const url = process.env.BACKEND_URL?.trim();
+          return url && url.startsWith('https://')
+            ? { notification_url: `${url}/webhooks/mercadopago` }
+            : {};
+        })(),
       },
     });
 
@@ -508,6 +511,7 @@ async function generateClientPaymentLink(req, res) {
     res.status(500).json({ error: 'Error generando link de pago: ' + err.message });
   }
 }
+
 
 // ============================================================
 // HISTORIAL DE PAGOS DE UN CLIENTE
@@ -994,15 +998,18 @@ async function paymentLinkAndWhatsApp(req, res) {
       .insert({ tenant_id: tenantId, user_id, type: 'gym_client', amount: finalAmount, currency: 'ARS', status: 'pending', mp_external_reference: externalRef })
       .select().single();
 
-    const { MercadoPagoConfig, Preference } = require('mercadopago');
-    const gymMpClient = new MercadoPagoConfig({ accessToken: tenant.mp_access_token });
+    const backendUrl = process.env.BACKEND_URL?.trim();
+    const notificationUrl = backendUrl && backendUrl.startsWith('https://')
+      ? `${backendUrl}/webhooks/mercadopago`
+      : null;
+
     const preference = await new Preference(gymMpClient).create({
       body: {
         items: [{ title: description || `Suscripción mensual — ${tenant.name}`, quantity: 1, unit_price: finalAmount, currency_id: 'ARS' }],
         payer: { name: client.full_name, email: client.email },
         external_reference: externalRef,
         payment_methods: { installments: 1 },
-        ...(process.env.BACKEND_URL && { notification_url: `${process.env.BACKEND_URL}/webhooks/mercadopago` }),
+        ...(notificationUrl && { notification_url: notificationUrl }),
       },
     });
 
@@ -1026,7 +1033,6 @@ async function paymentLinkAndWhatsApp(req, res) {
     res.status(500).json({ error: 'Error generando link: ' + err.message });
   }
 }
-
 // ============================================================
 // POST /admin/clients/:id/sync-payment — Sincronizar pago manualmente
 // Verifica el último pago pendiente contra MP y activa la suscripción

@@ -4,6 +4,8 @@ const express = require('express');
 const clientRouter = express.Router();
 const clientController = require('../controllers/clientController');
 const progressController = require('../controllers/progressController');
+const noticesController = require('../controllers/noticesController');
+const checkInController  = require('../controllers/checkInController');
 const { authenticate, requireRole } = require('../middleware/auth');
 
 clientRouter.use(authenticate, requireRole('client'));
@@ -26,6 +28,13 @@ clientRouter.get('/body-progress', progressController.getBodyProgress);
 
 // Logros
 clientRouter.get('/achievements', progressController.getAchievements);
+
+// Avisos del gimnasio — movido acá porque /client/* matchea antes que retentionRoutes
+clientRouter.get('/notices', noticesController.getClientNotices);
+
+// Check-in diario — mismo motivo que notices
+clientRouter.post('/checkin', checkInController.selfCheckIn);
+clientRouter.get('/checkins', checkInController.getMyCheckIns);
 
 // ---- Webhook Router ----
 const webhookRouter = express.Router();

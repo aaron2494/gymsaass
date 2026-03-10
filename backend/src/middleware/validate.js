@@ -96,7 +96,7 @@ const schemas = {
       status: z.enum(['active', 'inactive', 'blocked']),
       reason: z.string().optional(),
     }),
-    params: z.object({
+    params: z.object({ 
       tenantId: z.string().uuid(),
     }),
   }),

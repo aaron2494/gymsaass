@@ -153,59 +153,6 @@ async function getMyPayments(req, res) {
 
 
 
-// ============================================================
-// POST /client/workout-log — Registrar entrenamiento completado
-// ============================================================
-async function logWorkout(req, res) {
-  try {
-    const userId = req.user.id;
-    const tenantId = req.tenantId;
-    const { routine_id, exercises, notes, duration_minutes } = req.body;
-
-    const { data, error } = await supabase
-      .from('workout_logs')
-      .insert({
-        user_id: userId,
-        tenant_id: tenantId,
-        routine_id,
-        exercises_data: exercises, // JSON con series/reps/peso de cada ejercicio
-        notes,
-        duration_minutes,
-        logged_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.status(201).json({ message: 'Entrenamiento registrado', log: data });
-  } catch (err) {
-    logger.error('logWorkout error:', err);
-    res.status(500).json({ error: 'Error registrando entrenamiento: ' + err.message });
-  }
-}
-
-// ============================================================
-// GET /client/workout-logs — Historial de entrenamientos
-// ============================================================
-async function getWorkoutLogs(req, res) {
-  try {
-    const userId = req.user.id;
-    const { data, error } = await supabase
-      .from('workout_logs')
-      .select('*')
-      .eq('user_id', userId)
-      .order('logged_at', { ascending: false })
-      .limit(20);
-
-    if (error) throw error;
-    res.json({ logs: data || [] });
-  } catch (err) {
-    logger.error('getWorkoutLogs error:', err);
-    res.status(500).json({ error: err.message });
-  }
-}
-
 module.exports = {
   getProfile, getMyRoutine, getMySubscription, getMyPayments,
-  logWorkout, getWorkoutLogs,
 };

@@ -49,6 +49,22 @@ const authLimiter = rateLimit({
   max: 10,
   message: { error: 'Demasiados intentos de login. Intenta en 15 minutos.' },
 });
+// Rate limiting por tenant para endpoints de cliente y admin
+// Cada tenant tiene su propia ventana — un gym con 300 clientes no bloquea a otros
+const tenantLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
+  keyGenerator: (req) => {
+    // Usa tenantId si está disponible (post-auth), sino cae a IP
+    const tenantId = req.tenantId || req.headers['x-tenant-id'];
+    return tenantId ? `tenant:${tenantId}` : `ip:${req.ip}`;
+  },
+  message: { error: 'Demasiadas solicitudes para este gimnasio. Intenta más tarde.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => process.env.NODE_ENV === 'development',
+});
+
 
 // ============================================================
 // BODY PARSING

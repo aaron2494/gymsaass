@@ -238,6 +238,43 @@ async function sendWeeklyDigest({ adminEmail, gymName, stats }) {
   });
 }
 
+// ============================================================
+// EMAIL: Bienvenida al nuevo cliente del gimnasio
+// ============================================================
+async function sendClientWelcome({ clientEmail, clientName, gymName, setPasswordUrl }) {
+  const firstName = clientName.split(' ')[0];
+
+  const content = `
+    <h2>¡Hola, ${firstName}! 👋</h2>
+    <p>El gimnasio <strong>${gymName}</strong> creó tu cuenta. Ya podés descargar la app y ver tu rutina, tu suscripción y mucho más.</p>
+
+    <div class="alert-box success">
+      <strong>Tu cuenta está lista.</strong><br>
+      📧 Email: <strong>${clientEmail}</strong><br>
+      Solo te falta elegir tu contraseña para entrar.
+    </div>
+
+    <a href="${setPasswordUrl}" class="cta">Elegir mi contraseña →</a>
+
+    <p style="font-size:13px;color:#636E72;">
+      Este link expira en 24 horas. Si no fuiste vos, podés ignorar este email.<br>
+      Si el link no funciona, pedile al gimnasio que te reenvíe la invitación.
+    </p>
+
+    <hr class="divider">
+    <p style="font-size:13px;color:#636E72;">
+      <strong>¿Qué podés hacer en la app?</strong><br>
+      💪 Ver tu rutina del día · 📊 Seguir tu progreso · 🏆 Desbloquear logros · 📅 Reservar clases
+    </p>
+  `;
+
+  return sendEmail({
+    to: clientEmail,
+    subject: `👋 ${gymName} te dio acceso — elegí tu contraseña`,
+    html: baseTemplate(content, gymName),
+  });
+}
+
 module.exports = {
   sendEmail,
   sendClientSubscriptionExpiring,
@@ -245,4 +282,5 @@ module.exports = {
   sendSaasSubscriptionExpiring,
   sendWelcomeGym,
   sendWeeklyDigest,
+  sendClientWelcome,
 };

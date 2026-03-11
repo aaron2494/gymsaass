@@ -1,6 +1,7 @@
 const supabase = require('../config/supabase');
 const logger = require('../config/logger');
 const mpService = require('../services/mercadopago');
+const emailService = require('../services/emailService');
 
 // ============================================================
 // DASHBOARD DEL ADMIN
@@ -138,7 +139,7 @@ async function getClients(req, res) {
 async function createClient(req, res) {
   try {
     const tenantId = req.tenantId;
-    const { email, full_name, phone, password } = req.body;
+    const { email, full_name, phone } = req.body;
 
     // Verificar que el email no exista en este tenant
     const { data: existing } = await supabase
@@ -146,16 +147,26 @@ async function createClient(req, res) {
       .select('id')
       .eq('tenant_id', tenantId)
       .eq('email', email)
-      .single();
+      .maybeSingle();
 
     if (existing) {
       return res.status(409).json({ error: 'Ya existe un usuario con ese email en este gimnasio' });
     }
 
+    // Obtener nombre del gimnasio para el email de bienvenida
+    const { data: tenant } = await supabase
+      .from('tenants')
+      .select('name, phone')
+      .eq('id', tenantId)
+      .single();
+
+    // Contraseña temporal aleatoria — el cliente la reemplaza con el link de bienvenida
+    const tempPassword = Math.random().toString(36).slice(-10) + Math.random().toString(36).slice(-4).toUpperCase();
+
     // Crear en Supabase Auth
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email,
-      password,
+      password: tempPassword,
       email_confirm: true,
       user_metadata: { tenant_id: tenantId, role: 'client' },
     });
@@ -186,8 +197,44 @@ async function createClient(req, res) {
       throw userError;
     }
 
+    // Generar link para que el cliente elija su propia contraseña (expira en 24hs)
+    let setPasswordUrl = null;
+    let whatsappUrl    = null;
+    try {
+      const { data: linkData } = await supabase.auth.admin.generateLink({
+        type: 'recovery',
+        email,
+      });
+      setPasswordUrl = linkData?.properties?.action_link || null;
+    } catch (linkErr) {
+      logger.warn('No se pudo generar link de bienvenida para ' + email + ': ' + linkErr.message);
+    }
+
+    // Enviar email de bienvenida (fire-and-forget — no falla el request si el email falla)
+    if (setPasswordUrl) {
+      emailService.sendClientWelcome({
+        clientEmail:    email,
+        clientName:     full_name,
+        gymName:        tenant?.name || 'Tu gimnasio',
+        setPasswordUrl,
+      }).catch(err => logger.error('Error enviando email bienvenida cliente: ' + err.message));
+    }
+
+    // URL de WhatsApp para que el admin reenvíe manualmente si el cliente no tiene email
+    if (phone && setPasswordUrl) {
+      const gymName   = tenant?.name || 'el gimnasio';
+      const firstName = full_name.split(' ')[0];
+      const msg = `Hola ${firstName}! 👋 Te damos la bienvenida a ${gymName}.\n\nYa tenés tu cuenta lista. Tocá el link para elegir tu contraseña y empezar a usar la app:\n\n${setPasswordUrl}\n\n¡Nos vemos en el gym! 💪`;
+      whatsappUrl = `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`;
+    }
+
     logger.info(`Client created: ${newUser.id} in tenant ${tenantId}`);
-    res.status(201).json({ message: 'Cliente creado exitosamente', client: newUser });
+    res.status(201).json({
+      message: 'Cliente creado exitosamente',
+      client: newUser,
+      welcome_email_sent: !!setPasswordUrl,
+      whatsapp_url: whatsappUrl,
+    });
   } catch (err) {
     logger.error('Admin createClient error:', err);
     res.status(500).json({ error: 'Error creando cliente: ' + err.message });
@@ -228,15 +275,27 @@ async function updateClient(req, res) {
 async function getRoutines(req, res) {
   try {
     const tenantId = req.tenantId;
+    const { page = 1, limit = 20, search } = req.query;
+    const from = (parseInt(page) - 1) * parseInt(limit);
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('routines')
-      .select('*, exercises(count)')
+      .select('*, exercises(count)', { count: 'exact' })
       .eq('tenant_id', tenantId)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .range(from, from + parseInt(limit) - 1);
 
+    if (search) query = query.ilike('name', `%${search}%`);
+
+    const { data, error, count } = await query;
     if (error) throw error;
-    res.json({ routines: data });
+
+    res.json({
+      routines: data,
+      total: count,
+      page: parseInt(page),
+      pages: Math.ceil(count / parseInt(limit)),
+    });
   } catch (err) {
     logger.error('Admin getRoutines error:', err);
     res.status(500).json({ error: 'Error obteniendo rutinas' });
@@ -490,9 +549,12 @@ async function generateClientPaymentLink(req, res) {
         },
         external_reference: externalRef,
         payment_methods: { installments: 1 },
-        ...(process.env.BACKEND_URL && {
-          notification_url: `${process.env.BACKEND_URL}/webhooks/mercadopago`,
-        }),
+        ...(() => {
+          const url = process.env.BACKEND_URL?.trim();
+          return url && url.startsWith('https://')
+            ? { notification_url: `${url}/webhooks/mercadopago` }
+            : {};
+        })(),
       },
     });
 
@@ -582,26 +644,44 @@ async function getClientProgress(req, res) {
   try {
     const { id: clientId } = req.params;
     const tenantId = req.tenantId;
+    const { page = 1, limit = 10 } = req.query;
+    const from = (parseInt(page) - 1) * parseInt(limit);
 
-    // Últimos 20 entrenamientos del cliente
-    const { data: logs, error: logsErr } = await supabase
+    // Stats globales — query separada sin paginación para que sean exactas
+    const { data: allLogs } = await supabase
       .from('workout_logs')
-      .select('id, routine_id, exercises_data, notes, duration_minutes, logged_at')
+      .select('logged_at, duration_minutes, exercises_data')
+      .eq('user_id', clientId)
+      .eq('tenant_id', tenantId)
+      .order('logged_at', { ascending: false });
+
+    const totalWorkouts = allLogs?.length || 0;
+    const totalMinutes  = (allLogs || []).reduce((s, l) => s + (l.duration_minutes || 0), 0);
+
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const thisWeek = (allLogs || []).filter(l => new Date(l.logged_at) > oneWeekAgo).length;
+
+    // Racha
+    let streak = 0;
+    const logDays = [...new Set((allLogs || []).map(l => l.logged_at?.split('T')[0]))].sort().reverse();
+    for (let i = 0; i < logDays.length; i++) {
+      const expected = new Date();
+      expected.setDate(expected.getDate() - i);
+      if (logDays[i] === expected.toISOString().split('T')[0]) streak++;
+      else break;
+    }
+
+    // Lista paginada de logs con detalle completo
+    const { data: logs, error: logsErr, count } = await supabase
+      .from('workout_logs')
+      .select('id, routine_id, exercises_data, notes, duration_minutes, logged_at', { count: 'exact' })
       .eq('user_id', clientId)
       .eq('tenant_id', tenantId)
       .order('logged_at', { ascending: false })
-      .limit(20);
+      .range(from, from + parseInt(limit) - 1);
 
     if (logsErr) throw logsErr;
-
-    // Stats agregadas
-    const totalWorkouts = logs.length;
-    const totalMinutes  = logs.reduce((s, l) => s + (l.duration_minutes || 0), 0);
-
-    // Última semana
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-    const thisWeek = logs.filter(l => new Date(l.logged_at) > oneWeekAgo).length;
 
     // PRs del cliente
     const { data: prs } = await supabase
@@ -611,20 +691,12 @@ async function getClientProgress(req, res) {
       .order('achieved_at', { ascending: false })
       .limit(10);
 
-    // Racha actual (días consecutivos con entrenamiento)
-    let streak = 0;
-    const logDays = [...new Set(logs.map(l => l.logged_at?.split('T')[0]))].sort().reverse();
-    for (let i = 0; i < logDays.length; i++) {
-      const expected = new Date();
-      expected.setDate(expected.getDate() - i);
-      const expectedStr = expected.toISOString().split('T')[0];
-      if (logDays[i] === expectedStr) streak++;
-      else break;
-    }
-
     res.json({
       stats: { total_workouts: totalWorkouts, total_minutes: totalMinutes, this_week: thisWeek, streak },
       logs: logs || [],
+      total: count,
+      page: parseInt(page),
+      pages: Math.ceil(count / parseInt(limit)),
       prs: prs || [],
     });
   } catch (err) {

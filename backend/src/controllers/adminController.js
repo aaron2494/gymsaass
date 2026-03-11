@@ -204,6 +204,14 @@ async function createClient(req, res) {
       const { data: linkData } = await supabase.auth.admin.generateLink({
         type: 'recovery',
         email,
+        options: {
+          // Supabase redirige aquí después de validar el OTP.
+          // Debe ser el deep link de la app (ej: myapp://set-password)
+          // configurado en Supabase Dashboard → Auth → URL Configuration → Redirect URLs
+          redirectTo: process.env.FRONTEND_URL
+            ? process.env.FRONTEND_URL.replace(/\/$/, '') + '/set-password'
+            : process.env.BACKEND_URL || 'http://localhost:3000',
+        },
       });
       setPasswordUrl = linkData?.properties?.action_link || null;
     } catch (linkErr) {

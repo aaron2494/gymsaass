@@ -101,4 +101,39 @@ async function changePassword(req, res) {
   }
 }
 
-module.exports = { login, refreshToken, changePassword };
+// POST /auth/set-password — usada desde el deep link de bienvenida (sin JWT propio)
+// El access_token viene del redirect de Supabase (recovery link)
+async function setPassword(req, res) {
+  try {
+    const { access_token, new_password } = req.body;
+
+    if (!access_token) {
+      return res.status(400).json({ error: 'Token requerido' });
+    }
+    if (!new_password || new_password.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+
+    // Verificar que el token es válido y obtener el usuario
+    const { data: { user }, error: userError } = await supabase.auth.getUser(access_token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: 'El link expiró o ya fue usado. Pedile al gimnasio que te reenvíe la invitación.' });
+    }
+
+    // Actualizar contraseña usando el auth_id
+    const { error: updateError } = await supabase.auth.admin.updateUserById(user.id, {
+      password: new_password,
+    });
+
+    if (updateError) throw updateError;
+
+    logger.info('Password set for user: ' + user.email);
+    res.json({ message: 'Contraseña configurada exitosamente. Ya podés iniciar sesión.' });
+  } catch (err) {
+    logger.error('setPassword error:', err);
+    res.status(500).json({ error: 'Error configurando contraseña: ' + err.message });
+  }
+}
+
+module.exports = { login, refreshToken, changePassword, setPassword };

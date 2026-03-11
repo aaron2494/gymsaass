@@ -46,8 +46,6 @@ const schemas = {
       email: z.string().email(),
       full_name: z.string().min(2).max(255),
       phone: z.string().optional(),
-      password: z.string().min(6),
-      role: z.enum(['admin', 'client']),
     }),
   }),
 

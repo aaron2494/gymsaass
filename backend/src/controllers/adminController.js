@@ -542,7 +542,6 @@ async function generateClientPaymentLink(req, res) {
         }],
         payer: {
           name: client.full_name,
-          email: client.email,
         },
         external_reference: externalRef,
         payment_methods: { installments: 1 },

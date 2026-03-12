@@ -1,42 +1,55 @@
-// inviteStore.js — guarda invitaciones de un solo uso para el flujo de bienvenida
-// Clave de seguridad: ID de 32 bytes aleatorios (256 bits)
-// No usamos el link de Supabase directamente por WhatsApp: el bot de WA
-// pre-fetchea URLs para generar previews y quema el OTP de un solo uso.
+// inviteStore.js — tokens firmados con HMAC, sin estado en memoria.
+// Funciona con múltiples instancias de Render sin base de datos.
+// Formato del token: base64(payload_json).base64(hmac_sha256)
+// El payload contiene auth_id, email y expiración.
 
-const { randomBytes } = require('crypto');
-const logger = require('../config/logger');
+const crypto = require('crypto');
 
-const store = new Map(); // id -> { email, auth_id, expires_at, used }
+const SECRET = process.env.INVITE_SECRET || process.env.SUPABASE_JWT_SECRET || 'fallback-dev-secret-change-in-prod';
 
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, val] of store.entries()) {
-    if (val.expires_at < now) store.delete(id);
+function sign(payload) {
+  const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig  = crypto.createHmac('sha256', SECRET).update(data).digest('base64url');
+  return data + '.' + sig;
+}
+
+function verify(token) {
+  try {
+    const [data, sig] = token.split('.');
+    if (!data || !sig) return null;
+    const expected = crypto.createHmac('sha256', SECRET).update(data).digest('base64url');
+    // Comparación en tiempo constante para evitar timing attacks
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+    const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
+    if (payload.exp < Date.now()) return null; // expirado
+    return payload;
+  } catch {
+    return null;
   }
-}, 10 * 60 * 1000);
+}
 
+/**
+ * Crea un token firmado con email y auth_id.
+ * @returns {string} token opaco para usar en la URL
+ */
 function createInvite(email, authId) {
-  const id = randomBytes(32).toString('hex');
-  store.set(id, {
+  return sign({
     email,
     auth_id: authId,
-    expires_at: Date.now() + 24 * 60 * 60 * 1000, // 24hs
-    used: false,
+    exp: Date.now() + 24 * 60 * 60 * 1000, // 24hs
   });
-  return id;
 }
 
-function getInvite(id) {
-  const record = store.get(id);
-  if (!record) return null;
-  if (record.expires_at < Date.now()) { store.delete(id); return null; }
-  if (record.used) return null;
-  return record;
+/**
+ * Verifica y devuelve el payload, o null si expiró/inválido.
+ */
+function getInvite(token) {
+  return verify(token);
 }
 
-function markUsed(id) {
-  const record = store.get(id);
-  if (record) store.set(id, { ...record, used: true });
-}
+// markUsed ya no es necesario — los tokens de contraseña no son de un solo uso
+// porque el usuario puede necesitar reintentar si escribe mal.
+// La contraseña se sobreescribe si se usa dos veces (idempotente).
+function markUsed() {}
 
 module.exports = { createInvite, getInvite, markUsed };

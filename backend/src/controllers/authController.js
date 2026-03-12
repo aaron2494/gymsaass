@@ -18,7 +18,7 @@ async function login(req, res) {
     // Obtener perfil con tenant info
     const { data: profile } = await supabase
       .from('users')
-      .select('*, tenants(id, name, status, logo_url)')
+      .select('*, tenants(id, name, status, logo_url, phone)')
       .eq('auth_id', data.user.id)
       .single();
 

@@ -21,6 +21,7 @@ async function createNotice(req, res) {
         body: body.trim(),
         type,
         pinned,
+        is_active: true,          // siempre activo al crear
         expires_at: expires_at || null,
         created_by: req.user.id,
       })

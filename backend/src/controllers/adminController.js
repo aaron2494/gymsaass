@@ -205,12 +205,10 @@ async function createClient(req, res) {
         type: 'recovery',
         email,
         options: {
-          // Supabase redirige aquí después de validar el OTP.
-          // Debe ser el deep link de la app (ej: myapp://set-password)
-          // configurado en Supabase Dashboard → Auth → URL Configuration → Redirect URLs
-          redirectTo: process.env.FRONTEND_URL
-            ? process.env.FRONTEND_URL.replace(/\/$/, '') + '/set-password'
-            : process.env.BACKEND_URL || 'http://localhost:3000',
+          // Apunta a la página HTML intermedia del backend (HTTPS).
+          // Esa página extrae el token y abre la app con el deep link nativo.
+          // Esto funciona desde cualquier browser (incluyendo el in-app de WhatsApp).
+          redirectTo: (process.env.BACKEND_URL || 'http://localhost:3000') + '/set-password',
         },
       });
       setPasswordUrl = linkData?.properties?.action_link || null;

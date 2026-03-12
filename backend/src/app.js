@@ -124,33 +124,6 @@ app.use('/owner', ownerRoutes);
 app.use('/admin', tenantLimiter, adminRoutes);
 app.use('/client', tenantLimiter, clientRouter);
 app.use('/webhooks', webhookRouter);
-app.use('/', retentionRoutes);
-
-// Callback de pago (redirige a la app)
-app.get('/payments/callback', (req, res) => {
-  const { status } = req.query;
-  const deepLink = `${process.env.FRONTEND_URL || 'myapp'}://payment-result?status=${status}`;
-  res.redirect(deepLink);
-});
-
-// ============================================================
-// ERROR HANDLING
-// ============================================================
-app.use(notFound);
-app.use(errorHandler);
-
-// ============================================================
-// START
-// ============================================================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  logger.info(`🚀 GymSaaS Backend running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  startScheduler();
-});
-
-module.exports = app;
-
 // ============================================================
 // FLUJO DE BIENVENIDA — sin deep links, todo en el browser
 // GET  /invite/:id  →  formulario HTML de contraseña
@@ -273,3 +246,30 @@ app.post('/invite/:id', express.urlencoded({ extended: false }), async (req, res
     }));
   }
 });
+
+app.use('/', retentionRoutes);
+
+// Callback de pago (redirige a la app)
+app.get('/payments/callback', (req, res) => {
+  const { status } = req.query;
+  const deepLink = `${process.env.FRONTEND_URL || 'myapp'}://payment-result?status=${status}`;
+  res.redirect(deepLink);
+});
+
+// ============================================================
+// ERROR HANDLING
+// ============================================================
+app.use(notFound);
+app.use(errorHandler);
+
+// ============================================================
+// START
+// ============================================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  logger.info(`🚀 GymSaaS Backend running on port ${PORT}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  startScheduler();
+});
+
+module.exports = app;

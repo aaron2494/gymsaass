@@ -198,51 +198,30 @@ async function createClient(req, res) {
       throw userError;
     }
 
-    // Generar link de Supabase para que el cliente elija su contraseña
-    let setPasswordUrl = null;
-    let whatsappUrl    = null;
-    try {
-      const { data: linkData } = await supabase.auth.admin.generateLink({
-        type: 'recovery',
-        email,
-        options: {
-          // redirectTo apunta a la página HTML del backend.
-          // IMPORTANTE: el link de Supabase NO se manda directo por WhatsApp
-          // porque WhatsApp pre-fetchea URLs y quema el OTP token.
-          // En cambio lo guardamos en el inviteStore y mandamos /invite/:id
-          redirectTo: (process.env.BACKEND_URL || 'http://localhost:3000') + '/set-password',
-        },
-      });
-      setPasswordUrl = linkData?.properties?.action_link || null;
-    } catch (linkErr) {
-      logger.warn('No se pudo generar link de bienvenida para ' + email + ': ' + linkErr.message);
-    }
+    // Crear invite de bienvenida.
+    // NO usamos generateLink de Supabase porque WhatsApp pre-fetchea URLs
+    // y quema el OTP token antes de que el usuario lo abra.
+    // En cambio: guardamos email+auth_id en memoria, mandamos /invite/:id
+    // que es una página web con formulario → el usuario pone su contraseña
+    // directamente en el browser, sin deep links ni app.
+    const backendUrl = (process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const inviteId   = inviteStore.createInvite(email, authData.user.id);
+    const inviteUrl  = backendUrl + '/invite/' + inviteId;
+    let whatsappUrl  = null;
 
-    // Guardar el link en inviteStore para que WhatsApp no pueda pre-fetchearlo.
-    // WhatsApp hace GET a las URLs para generar previews, quemando el OTP de un solo uso.
-    // Mandamos /invite/:id (devuelve HTML) en vez del link directo de Supabase.
-    let inviteUrl = setPasswordUrl; // fallback si algo falla
-    if (setPasswordUrl) {
-      const id = inviteStore.createInvite(setPasswordUrl);
-      const backendUrl = (process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '');
-      inviteUrl = backendUrl + '/invite/' + id;
-    }
+    // Enviar email de bienvenida (fire-and-forget — Resend puede fallar en dev)
+    emailService.sendClientWelcome({
+      clientEmail:    email,
+      clientName:     full_name,
+      gymName:        tenant?.name || 'Tu gimnasio',
+      setPasswordUrl: inviteUrl,
+    }).catch(err => logger.error('Error enviando email bienvenida cliente: ' + err.message));
 
-    // Enviar email de bienvenida con el invite URL (fire-and-forget)
-    if (inviteUrl) {
-      emailService.sendClientWelcome({
-        clientEmail:    email,
-        clientName:     full_name,
-        gymName:        tenant?.name || 'Tu gimnasio',
-        setPasswordUrl: inviteUrl,
-      }).catch(err => logger.error('Error enviando email bienvenida cliente: ' + err.message));
-    }
-
-    // URL de WhatsApp con /invite/:id — seguro contra pre-fetch de WhatsApp
-    if (phone && inviteUrl) {
+    // URL de WhatsApp — /invite/:id devuelve HTML, WhatsApp no puede consumirlo
+    if (phone) {
       const gymName   = tenant?.name || 'el gimnasio';
       const firstName = full_name.split(' ')[0];
-      const msg = `Hola ${firstName}! 👋 Te damos la bienvenida a ${gymName}.\n\nYa tenés tu cuenta lista. Tocá el link para elegir tu contraseña y empezar a usar la app:\n\n${inviteUrl}\n\n¡Nos vemos en el gym! 💪`;
+      const msg = `Hola ${firstName}! 👋 Te damos la bienvenida a ${gymName}.\n\nYa tenés tu cuenta lista. Tocá el link para elegir tu contraseña y empezar a usar la app 💪\n\n${inviteUrl}`;
       whatsappUrl = `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`;
     }
 
@@ -250,7 +229,7 @@ async function createClient(req, res) {
     res.status(201).json({
       message: 'Cliente creado exitosamente',
       client: newUser,
-      welcome_email_sent: !!setPasswordUrl,
+      welcome_email_sent: true,
       whatsapp_url: whatsappUrl,
     });
   } catch (err) {

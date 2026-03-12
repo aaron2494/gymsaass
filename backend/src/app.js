@@ -151,84 +151,125 @@ app.listen(PORT, () => {
 
 module.exports = app;
 
-// POST /invite — guarda un link y devuelve una URL segura para WhatsApp
-app.post('/invite', (req, res) => {
-  const { url } = req.body;
-  if (!url) return res.status(400).json({ error: 'url requerida' });
-  const id = inviteStore.createInvite(url);
-  logger.info('Invite created: ' + id);
-  res.json({ invite_url: (process.env.BACKEND_URL || 'http://localhost:3000') + '/invite/' + id });
-});
+// ============================================================
+// FLUJO DE BIENVENIDA — sin deep links, todo en el browser
+// GET  /invite/:id  →  formulario HTML de contraseña
+// POST /invite/:id  →  setea contraseña y muestra éxito
+// ============================================================
 
-// GET /invite/:id — cuando el USUARIO (no el bot de WA) toca el link, redirige al link real
-// WhatsApp pre-fetcha URLs pero este endpoint devuelve HTML, no redirige.
-// Solo redirige cuando el usuario toca "Abrir" en la página.
-app.get('/invite/:id', (req, res) => {
-  const record = inviteStore.getInvite(req.params.id);
-  const APP_SCHEME = (process.env.FRONTEND_URL || 'myapp://').replace(/\/$/, '');
+const supabaseAdmin = require('./config/supabase');
 
-  if (!record || record.expires_at < Date.now()) {
-    return res.send(`<!DOCTYPE html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Link expirado</title>
-<style>body{font-family:system-ui,sans-serif;background:#6C63FF;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.card{background:#fff;border-radius:20px;padding:36px 28px;max-width:380px;width:100%;text-align:center}</style></head>
-<body><div class="card">
-<div style="font-size:48px;margin-bottom:16px">⚠️</div>
-<h1 style="font-size:20px;font-weight:900;color:#2D3436;margin-bottom:8px">Link expirado</h1>
-<p style="font-size:14px;color:#636E72;line-height:1.6">Este link ya fue usado o expiró.<br>Pedile al gimnasio que te reenvíe la invitación.</p>
-</div></body></html>`);
-  }
-
-  const { url } = record;
-  // NO eliminamos el registro acá — lo hace Supabase al validar el token.
-  // Si WhatsApp fetchea esta página, ve HTML y no sigue el redirect.
-
-  res.send(`<!DOCTYPE html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Crear contraseña — GymSaaS</title>
+function inviteHtml({ title, emoji, body, showForm, inviteId, error }) {
+  return `<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} — GymSaaS</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#6C63FF;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.card{background:#fff;border-radius:20px;padding:36px 28px;max-width:380px;width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.18)}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#6C63FF;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:#fff;border-radius:20px;padding:36px 28px;max-width:400px;width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.2)}
 .emoji{font-size:52px;margin-bottom:16px}
-h1{font-size:22px;font-weight:900;color:#2D3436;margin-bottom:8px}
-p{font-size:14px;color:#636E72;line-height:1.6;margin-bottom:24px}
-.btn{display:block;background:#6C63FF;color:#fff;font-size:16px;font-weight:800;padding:16px 24px;border-radius:12px;text-decoration:none;margin-bottom:12px;border:none;cursor:pointer;width:100%}
-#status{font-size:13px;color:#B2BEC3;margin-top:16px}
+h1{font-size:22px;font-weight:900;color:#2D3436;margin-bottom:10px}
+p{font-size:14px;color:#636E72;line-height:1.6;margin-bottom:20px}
+label{display:block;text-align:left;font-size:13px;font-weight:700;color:#2D3436;margin-bottom:6px}
+input[type=password]{width:100%;padding:14px;border:2px solid #DFE6E9;border-radius:12px;font-size:15px;margin-bottom:14px;outline:none}
+input[type=password]:focus{border-color:#6C63FF}
+button{width:100%;background:#6C63FF;color:#fff;font-size:16px;font-weight:800;padding:16px;border-radius:12px;border:none;cursor:pointer;margin-top:4px}
+button:active{opacity:.85}
+button:disabled{background:#B2BEC3;cursor:not-allowed}
+.error{background:#FFF0F0;border:1.5px solid #FF4757;color:#FF4757;border-radius:10px;padding:12px;font-size:13px;margin-bottom:16px;text-align:left}
+.success-note{background:#E8FFF3;border:1.5px solid #2ED573;color:#00B894;border-radius:10px;padding:12px;font-size:13px;margin-top:16px}
 </style></head>
 <body><div class="card">
-  <div class="emoji">💪</div>
-  <h1>¡Bienvenido!</h1>
-  <p>Tocá el botón para abrir la app y elegir tu contraseña.</p>
-  <button class="btn" onclick="openApp()">Abrir en la app</button>
-  <p id="status"></p>
-</div>
-<script>
-// Esta página NO redirige automáticamente para que WhatsApp no consuma el link.
-// Solo abre la app cuando el USUARIO toca el botón.
-var supabaseUrl = ${JSON.stringify(url)};
-var appScheme   = ${JSON.stringify(APP_SCHEME)};
-
-function openApp() {
-  // Extraer access_token de la URL de Supabase y pasárselo a la app
-  var match = supabaseUrl.match(/[?&]token=([^&]+)/);
-  if (match) {
-    // Formato directo con token — construir deep link para la app
-    // La app lo recibe en Linking.getInitialURL() y llama al backend /auth/set-password
-    var deepLink = appScheme + '/set-password?supabase_url=' + encodeURIComponent(supabaseUrl);
-    document.getElementById('status').textContent = 'Abriendo app…';
-    window.location.href = deepLink;
-  } else {
-    // La URL de Supabase es la de verify — abrirla directamente abre el browser, no la app.
-    // Redirigir a Supabase que luego redirige a la app via redirectTo configurado.
-    document.getElementById('status').textContent = 'Abriendo…';
-    window.location.href = supabaseUrl;
-  }
-  setTimeout(function() {
-    document.getElementById('status').textContent = '¿No se abrió? Asegurate de tener la app instalada.';
-  }, 2500);
+  <div class="emoji">${emoji}</div>
+  <h1>${title}</h1>
+  ${body}
+  ${error ? `<div class="error">⚠️ ${error}</div>` : ''}
+  ${showForm ? `
+  <form method="POST" action="/invite/${inviteId}" id="f">
+    <label>Nueva contraseña</label>
+    <input type="password" name="password" placeholder="Mínimo 6 caracteres" required minlength="6" autofocus>
+    <label>Repetir contraseña</label>
+    <input type="password" name="confirm" placeholder="Repetí la misma" required minlength="6">
+    <button type="submit" id="btn">Guardar contraseña</button>
+  </form>
+  <script>
+    document.getElementById('f').onsubmit = function() {
+      var p = this.password.value, c = this.confirm.value;
+      if (p !== c) { alert('Las contraseñas no coinciden'); return false; }
+      document.getElementById('btn').disabled = true;
+      document.getElementById('btn').textContent = 'Guardando…';
+    };
+  </script>` : ''}
+</div></body></html>`;
 }
-</script>
-</body></html>`);
+
+app.get('/invite/:id', (req, res) => {
+  const record = inviteStore.getInvite(req.params.id);
+  if (!record) {
+    return res.status(410).send(inviteHtml({
+      emoji: '⚠️', title: 'Link expirado o ya usado',
+      body: '<p>Este link expiró o ya fue utilizado.<br>Pedile al gimnasio que te reenvíe la invitación.</p>',
+      showForm: false,
+    }));
+  }
+  res.send(inviteHtml({
+    emoji: '💪', title: '¡Bienvenido!',
+    body: '<p>Elegí tu contraseña para acceder a la app de tu gimnasio.</p>',
+    showForm: true,
+    inviteId: req.params.id,
+  }));
+});
+
+app.post('/invite/:id', express.urlencoded({ extended: false }), async (req, res) => {
+  const record = inviteStore.getInvite(req.params.id);
+  if (!record) {
+    return res.status(410).send(inviteHtml({
+      emoji: '⚠️', title: 'Link expirado o ya usado',
+      body: '<p>Este link expiró o ya fue utilizado.<br>Pedile al gimnasio que te reenvíe la invitación.</p>',
+      showForm: false,
+    }));
+  }
+
+  const { password, confirm } = req.body;
+  if (!password || password.length < 6) {
+    return res.send(inviteHtml({
+      emoji: '💪', title: '¡Bienvenido!',
+      body: '<p>Elegí tu contraseña para acceder a la app de tu gimnasio.</p>',
+      showForm: true, inviteId: req.params.id,
+      error: 'La contraseña debe tener al menos 6 caracteres.',
+    }));
+  }
+  if (password !== confirm) {
+    return res.send(inviteHtml({
+      emoji: '💪', title: '¡Bienvenido!',
+      body: '<p>Elegí tu contraseña para acceder a la app de tu gimnasio.</p>',
+      showForm: true, inviteId: req.params.id,
+      error: 'Las contraseñas no coinciden.',
+    }));
+  }
+
+  try {
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(record.auth_id, { password });
+    if (error) throw error;
+
+    inviteStore.markUsed(req.params.id);
+    logger.info('Password set via invite for: ' + record.email);
+
+    res.send(inviteHtml({
+      emoji: '🎉', title: '¡Listo!',
+      body: `<p>Tu contraseña fue configurada.<br><br>Ya podés abrir la app e iniciar sesión con:<br><br><strong>${record.email}</strong></p>
+      <div class="success-note">✅ Abrí la app y tocá "Iniciar sesión"</div>`,
+      showForm: false,
+    }));
+  } catch (err) {
+    logger.error('Error setting password via invite: ' + err.message);
+    res.send(inviteHtml({
+      emoji: '💪', title: '¡Bienvenido!',
+      body: '<p>Elegí tu contraseña para acceder a la app de tu gimnasio.</p>',
+      showForm: true, inviteId: req.params.id,
+      error: 'Error guardando la contraseña. Intentá de nuevo.',
+    }));
+  }
 });

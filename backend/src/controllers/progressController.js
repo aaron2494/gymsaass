@@ -20,15 +20,46 @@ const ACHIEVEMENT_DEFINITIONS = {
 // ============================================================
 async function logWorkout(req, res) {
   try {
-    const userId = req.user.id;
+    const userId   = req.user.id;
     const tenantId = req.tenantId;
     const { routine_id, exercises, notes, duration_minutes } = req.body;
 
-    // Guardar el log
-    const { data: log, error } = await supabase
+    // Fecha en zona horaria del cliente (enviada desde la app)
+    // Si no viene, usamos UTC pero es suficiente para la lógica de merge
+    const now      = new Date();
+    const loggedAt = now.toISOString();
+    // Fecha local del servidor (YYYY-MM-DD) — usada para detectar duplicado del día
+    const localDateStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD sin ambigüedad de locale
+
+    // Buscar si ya existe un log para este usuario en el día de hoy
+    // Usamos DATE(logged_at AT TIME ZONE 'UTC') como proxy — aceptamos el edge case
+    // de medianoche UTC (< 3hs diferencia para AR) a cambio de simplicidad
+    const { data: existing } = await supabase
       .from('workout_logs')
-      .insert({ user_id: userId, tenant_id: tenantId, routine_id, exercises_data: exercises, notes, duration_minutes, logged_at: new Date().toISOString() })
-      .select().single();
+      .select('id')
+      .eq('user_id', userId)
+      .gte('logged_at', localDateStr + 'T00:00:00.000Z')
+      .lte('logged_at', localDateStr + 'T23:59:59.999Z')
+      .order('logged_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let log, error;
+
+    if (existing?.id) {
+      // UPDATE — sobreescribir el log del día, no crear duplicado
+      ({ data: log, error } = await supabase
+        .from('workout_logs')
+        .update({ routine_id, exercises_data: exercises, notes, duration_minutes, logged_at: loggedAt })
+        .eq('id', existing.id)
+        .select().single());
+    } else {
+      // INSERT — primer log del día
+      ({ data: log, error } = await supabase
+        .from('workout_logs')
+        .insert({ user_id: userId, tenant_id: tenantId, routine_id, exercises_data: exercises, notes, duration_minutes, logged_at: loggedAt })
+        .select().single());
+    }
 
     if (error) throw error;
 
@@ -89,14 +120,23 @@ async function logWorkout(req, res) {
 async function getWorkoutLogs(req, res) {
   try {
     const userId = req.user.id;
-    const { data, error } = await supabase
+    const { page = 1, limit = 10 } = req.query;
+    const from = (parseInt(page) - 1) * parseInt(limit);
+
+    const { data, error, count } = await supabase
       .from('workout_logs')
-      .select('*')
+      .select('*', { count: 'exact' })
       .eq('user_id', userId)
       .order('logged_at', { ascending: false })
-      .limit(20);
+      .range(from, from + parseInt(limit) - 1);
+
     if (error) throw error;
-    res.json({ logs: data || [] });
+    res.json({
+      logs: data || [],
+      total: count,
+      page: parseInt(page),
+      pages: Math.ceil(count / parseInt(limit)),
+    });
   } catch (err) {
     logger.error('getWorkoutLogs error:', err);
     res.status(500).json({ error: err.message });

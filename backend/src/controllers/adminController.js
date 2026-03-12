@@ -8,6 +8,8 @@ const inviteStore = require('../services/inviteStore');
 // DASHBOARD DEL ADMIN
 // ============================================================
 async function getDashboard(req, res) {
+  // Deshabilitar caché — el dashboard cambia constantemente
+  res.set('Cache-Control', 'no-store');
   try {
     const tenantId = req.tenantId;
     const now = new Date();
@@ -532,6 +534,7 @@ async function generateClientPaymentLink(req, res) {
     const gymMpClient = new MercadoPagoConfig({ accessToken: tenant.mp_access_token });
     const gymPreference = new Preference(gymMpClient);
 
+    const backendBaseGen = (process.env.BACKEND_URL || '').trim().replace(/\/$/, '');
     const preference = await gymPreference.create({
       body: {
         items: [{
@@ -540,18 +543,20 @@ async function generateClientPaymentLink(req, res) {
           unit_price: finalAmount,
           currency_id: 'ARS',
         }],
-        payer: {
-          name: client.full_name,
-          email: client.email,
-        },
+        payer: { name: client.full_name, email: client.email },
         external_reference: externalRef,
-        payment_methods: { installments: 1 },
-        ...(() => {
-          const url = process.env.BACKEND_URL?.trim();
-          return url && url.startsWith('https://')
-            ? { notification_url: `${url}/webhooks/mercadopago` }
-            : {};
-        })(),
+        payment_methods: { installments: 1, excluded_payment_types: [] },
+        expires: true,
+        expiration_date_to: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+        ...(backendBaseGen.startsWith('https://') && {
+          back_urls: {
+            success: `${backendBaseGen}/payments/callback?status=success`,
+            failure: `${backendBaseGen}/payments/callback?status=failure`,
+            pending: `${backendBaseGen}/payments/callback?status=pending`,
+          },
+          auto_return: 'approved',
+          notification_url: `${backendBaseGen}/webhooks/mercadopago`,
+        }),
       },
     });
 
@@ -1071,13 +1076,24 @@ async function paymentLinkAndWhatsApp(req, res) {
       ? `${backendUrl}/webhooks/mercadopago`
       : null;
 
+    const backendBase = (process.env.BACKEND_URL || '').trim().replace(/\/$/, '');
     const preference = await new Preference(gymMpClient).create({
       body: {
         items: [{ title: description || `Suscripción mensual — ${tenant.name}`, quantity: 1, unit_price: finalAmount, currency_id: 'ARS' }],
         payer: { name: client.full_name, email: client.email },
         external_reference: externalRef,
-        payment_methods: { installments: 1 },
-        ...(notificationUrl && { notification_url: notificationUrl }),
+        payment_methods: { installments: 1, excluded_payment_types: [] },
+        expires: true,
+        expiration_date_to: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+        ...(backendBase.startsWith('https://') && {
+          back_urls: {
+            success: `${backendBase}/payments/callback?status=success`,
+            failure: `${backendBase}/payments/callback?status=failure`,
+            pending: `${backendBase}/payments/callback?status=pending`,
+          },
+          auto_return: 'approved',
+          notification_url: `${backendBase}/webhooks/mercadopago`,
+        }),
       },
     });
 
@@ -1133,21 +1149,30 @@ async function syncClientPayment(req, res) {
       return res.json({ message: 'Suscripción activada', status: 'approved' });
     }
 
+    // Buscar credenciales MP del gym
+    const { data: tenantData } = await supabase
+      .from('tenants')
+      .select('mp_access_token')
+      .eq('id', tenantId)
+      .single();
+
+    if (!tenantData?.mp_access_token) {
+      // Sin credenciales MP, solo se puede activar manualmente
+      const { manual } = req.body;
+      if (manual) {
+        await supabase.from('payments').update({ status: 'approved', payment_date: new Date().toISOString() }).eq('id', payment.id);
+        await activateGymClientSubscription({ ...payment, status: 'approved' });
+        return res.json({ message: '✅ Pago activado manualmente', status: 'approved' });
+      }
+      return res.status(400).json({ error: 'MercadoPago no configurado. Activá manualmente.' });
+    }
+
+    const { MercadoPagoConfig, Payment: MpPayment, MerchantOrder } = require('mercadopago');
+    const gymMpClient = new MercadoPagoConfig({ accessToken: tenantData.mp_access_token });
+
     // Si tiene mp_payment_id, consultar MP directamente
     if (payment.mp_payment_id) {
-      const { MercadoPagoConfig, Payment } = require('mercadopago');
-      const { data: tenantData } = await supabase
-        .from('tenants')
-        .select('mp_access_token')
-        .eq('id', tenantId)
-        .single();
-
-      if (!tenantData?.mp_access_token) {
-        return res.status(400).json({ error: 'MercadoPago no configurado' });
-      }
-
-      const mpClient  = new MercadoPagoConfig({ accessToken: tenantData.mp_access_token });
-      const mpPayment = await new Payment(mpClient).get({ id: payment.mp_payment_id });
+      const mpPayment = await new MpPayment(gymMpClient).get({ id: payment.mp_payment_id });
 
       if (mpPayment.status === 'approved') {
         await supabase.from('payments').update({
@@ -1162,19 +1187,17 @@ async function syncClientPayment(req, res) {
       return res.json({ message: `Pago en estado: ${mpPayment.status}`, status: mpPayment.status });
     }
 
-    // Sin mp_payment_id — activar manualmente (el admin confirma el pago)
+    // Sin mp_payment_id — el admin puede activar manualmente
     const { manual } = req.body;
     if (manual) {
       await supabase.from('payments').update({
         status: 'approved',
         payment_date: new Date().toISOString(),
       }).eq('id', payment.id);
-
       await activateGymClientSubscription({ ...payment, status: 'approved' });
       return res.json({ message: '✅ Pago activado manualmente', status: 'approved' });
     }
-
-    return res.json({ message: 'Pago pendiente sin confirmar', status: 'pending' });
+    return res.json({ message: 'Pago pendiente sin confirmar. El webhook lo procesará automáticamente o activá manualmente.', status: 'pending' });
   } catch (err) {
     logger.error('syncClientPayment error:', err);
     res.status(500).json({ error: 'Error sincronizando pago: ' + err.message });

@@ -86,8 +86,33 @@ async function processPaymentEvent(mpPaymentId, webhookEventId) {
   try {
     if (!mpPaymentId) return;
 
-    // Obtener detalles del pago desde MP (server-side, no confiar en webhook payload)
-    const mpPayment = await mpService.getPaymentInfo(mpPaymentId);
+    // Primero obtener el pago de nuestra DB para saber a qué tenant pertenece
+    // (necesitamos las credenciales MP del gimnasio, no del SaaS)
+    const { data: existingPaymentFirst } = await supabase
+      .from('payments')
+      .select('tenant_id, user_id, type')
+      .eq('mp_payment_id', String(mpPaymentId))
+      .maybeSingle();
+
+    // Si no lo encontramos por mp_payment_id, lo buscaremos por external_reference después
+    // Por ahora intentar con credenciales del tenant si las tenemos
+    let mpPayment;
+    if (existingPaymentFirst?.tenant_id) {
+      const { data: tenantData } = await supabase
+        .from('tenants')
+        .select('mp_access_token')
+        .eq('id', existingPaymentFirst.tenant_id)
+        .single();
+      if (tenantData?.mp_access_token) {
+        const { MercadoPagoConfig, Payment } = require('mercadopago');
+        const gymClient = new MercadoPagoConfig({ accessToken: tenantData.mp_access_token });
+        mpPayment = await new Payment(gymClient).get({ id: mpPaymentId });
+      }
+    }
+    // Fallback: usar credenciales del SaaS (para pagos SaaS o si no encontramos tenant)
+    if (!mpPayment) {
+      mpPayment = await mpService.getPaymentInfo(mpPaymentId);
+    }
 
     const {
       status,
@@ -109,7 +134,7 @@ async function processPaymentEvent(mpPaymentId, webhookEventId) {
       .from('payments')
       .select('*')
       .eq('mp_external_reference', external_reference)
-      .single();
+      .maybeSingle();
 
     if (!existingPayment) {
       logger.warn(`Payment with ref ${external_reference} not found in DB`);
@@ -275,7 +300,7 @@ async function markWebhookFailed(eventId, errorMessage) {
   await supabase.from('webhook_events').update({
     processed: false,
     error_message: errorMessage,
-    retry_count: supabase.raw('retry_count + 1'),
+    // retry_count incremented via DB default, or use a separate query if needed
   }).eq('id', eventId);
 }
 

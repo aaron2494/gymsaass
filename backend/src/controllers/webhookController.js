@@ -7,23 +7,21 @@ const crypto = require('crypto');
 // VERIFICAR FIRMA DEL WEBHOOK (seguridad)
 // ============================================================
 function verifyWebhookSignature(req) {
+  // MercadoPago envía una firma en el header x-signature
   const signature = req.headers['x-signature'];
   const requestId = req.headers['x-request-id'];
 
   if (!signature || !requestId) return false;
 
+  // Extraer ts y hash de la firma
   const parts = signature.split(',');
   const ts = parts.find(p => p.startsWith('ts='))?.split('=')[1];
   const v1 = parts.find(p => p.startsWith('v1='))?.split('=')[1];
 
   if (!ts || !v1) return false;
 
-  const dataId =
-    req.query.id ||
-    req.query['data.id'] ||
-    req.body?.data?.id ||
-    '';
-
+  // Construir el string a firmar
+  const dataId = req.query.data?.id || req.body?.data?.id || '';
   const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`;
 
   const expectedHash = crypto
@@ -277,7 +275,7 @@ async function markWebhookFailed(eventId, errorMessage) {
   await supabase.from('webhook_events').update({
     processed: false,
     error_message: errorMessage,
-   retry_count: (existing.retry_count || 0) + 1,
+    retry_count: supabase.raw('retry_count + 1'),
   }).eq('id', eventId);
 }
 

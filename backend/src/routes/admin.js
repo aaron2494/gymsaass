@@ -1,55 +1,63 @@
 const express = require('express');
-const router = express.Router();
-const adminController = require('../controllers/adminController');
-const settingsController = require('../controllers/settingsController');
-const { authenticate, requireRole } = require('../middleware/auth');
-const { validate, schemas } = require('../middleware/validate');
+const router  = express.Router();
 
-// Todas las rutas requieren ser admin
+const adminController     = require('../controllers/adminController');
+const routineController   = require('../controllers/adminRoutineController');
+const paymentController   = require('../controllers/adminPaymentController');
+const statsController     = require('../controllers/adminStatsController');
+const notesController     = require('../controllers/adminNotesController');
+const rankingController   = require('../controllers/adminRankingController');
+const settingsController  = require('../controllers/settingsController');
 const aiRoutineController = require('../controllers/aiRoutineController');
+const { authenticate, requireRole } = require('../middleware/auth');
+const { validate, schemas }         = require('../middleware/validate');
 
+// Todas las rutas requieren estar autenticado como admin u owner
 router.use(authenticate, requireRole('admin', 'owner'));
 
+// ── AI ────────────────────────────────────────────────────────────────────────
 router.post('/ai-routine', aiRoutineController.generateRoutine);
 
-// Dashboard
+// ── Dashboard ─────────────────────────────────────────────────────────────────
 router.get('/dashboard', adminController.getDashboard);
 
-// Clientes
-router.get('/clients', adminController.getClients);
-router.post('/clients', validate(schemas.createUser), adminController.createClient);
+// ── Clientes — rutas fijas ANTES de /:clientId para evitar conflictos ─────────
+router.get('/clients/alerts',                 statsController.getClientAlerts);
+router.get('/clients/ranking',                rankingController.getClientRanking);
+router.post('/clients/payment-link',          paymentController.generateClientPaymentLink);
+router.post('/clients/payment-link-whatsapp', paymentController.paymentLinkAndWhatsApp);
+router.post('/clients/subscription',          validate(schemas.createSubscription), paymentController.createClientSubscription);
+
+router.get('/clients',             adminController.getClients);
+router.post('/clients',            validate(schemas.createUser), adminController.createClient);
 router.patch('/clients/:clientId', adminController.updateClient);
-router.get('/clients/:clientId/payments', adminController.getClientPayments);
 
-// Suscripciones
-router.post('/clients/subscription', validate(schemas.createSubscription), adminController.createClientSubscription);
-router.post('/clients/payment-link', adminController.generateClientPaymentLink);
+router.patch('/clients/:id/deactivate',     statsController.deactivateClient);
+router.delete('/clients/:id',               statsController.deleteClient);
+router.get('/clients/:clientId/payments',   paymentController.getClientPayments);
+router.post('/clients/:id/sync-payment',    paymentController.syncClientPayment);
+router.get('/clients/:id/progress',         statsController.getClientProgress);
 
-// Rutinas — assign ANTES de /:routineId para evitar conflicto de rutas
-router.get('/routines', adminController.getRoutines);
-router.post('/routines', validate(schemas.createRoutine), adminController.createRoutine);
-router.post('/routines/assign', adminController.assignRoutine);
-router.get('/routines/:routineId', adminController.getRoutineById);
-router.put('/routines/:routineId', adminController.updateRoutine);
-router.delete('/routines/:routineId', adminController.deleteRoutine);
+// Notas de cliente
+router.get('/clients/:id/notes',            notesController.getClientNotes);
+router.post('/clients/:id/notes',           notesController.addClientNote);
+router.delete('/clients/:id/notes/:noteId', notesController.deleteClientNote);
 
-// Configuración del gimnasio
-router.get('/settings', settingsController.getSettings);
-router.put('/settings', settingsController.updateSettings);
-router.post('/settings/mercadopago', settingsController.saveMercadoPagoCredentials);
+// ── Rutinas — /assign ANTES de /:routineId ────────────────────────────────────
+router.post('/routines/assign',       routineController.assignRoutine);
+router.get('/routines',               routineController.getRoutines);
+router.post('/routines',              validate(schemas.createRoutine), routineController.createRoutine);
+router.get('/routines/:routineId',    routineController.getRoutineById);
+router.put('/routines/:routineId',    routineController.updateRoutine);
+router.delete('/routines/:routineId', routineController.deleteRoutine);
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+router.get('/stats/monthly', statsController.getMonthlyStats);
+
+// ── Configuración ─────────────────────────────────────────────────────────────
+router.get('/settings',                settingsController.getSettings);
+router.put('/settings',                settingsController.updateSettings);
+router.post('/settings/mercadopago',   settingsController.saveMercadoPagoCredentials);
 router.delete('/settings/mercadopago', settingsController.removeMercadoPagoCredentials);
-
-// Alertas y stats
-router.get('/clients/alerts', adminController.getClientAlerts);
-router.get('/clients/ranking', adminController.getClientRanking);
-router.get('/stats/monthly', adminController.getMonthlyStats);
-router.patch('/clients/:id/deactivate', adminController.deactivateClient);
-router.delete('/clients/:id', adminController.deleteClient);
-router.get('/clients/:id/notes', adminController.getClientNotes);
-router.post('/clients/:id/notes', adminController.addClientNote);
-router.delete('/clients/:id/notes/:noteId', adminController.deleteClientNote);
-router.get('/clients/:id/progress', adminController.getClientProgress);
-router.post('/clients/:id/sync-payment', adminController.syncClientPayment);
-router.post('/clients/payment-link-whatsapp', adminController.paymentLinkAndWhatsApp);
 
 module.exports = router;

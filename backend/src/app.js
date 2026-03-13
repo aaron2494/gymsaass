@@ -7,11 +7,12 @@ const rateLimit = require('express-rate-limit');
 const logger = require('./config/logger');
 const inviteStore = require('./services/inviteStore');
 
-const publicRoutes = require('./routes/public');
-const authRoutes = require('./routes/auth');
-const ownerRoutes = require('./routes/owner');
-const adminRoutes = require('./routes/admin');
-const { clientRouter, webhookRouter } = require('./routes/clientAndWebhooks');
+const publicRoutes    = require('./routes/public');
+const authRoutes      = require('./routes/auth');
+const ownerRoutes     = require('./routes/owner');
+const adminRoutes     = require('./routes/admin');
+const clientRouter    = require('./routes/client');
+const webhookRouter   = require('./routes/webhooks');
 const retentionRoutes = require('./routes/retention');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const { startScheduler } = require('./services/scheduler');

@@ -32,11 +32,7 @@ router.delete('/notices/:noticeId',
   noticesController.deleteNotice
 );
 
-// Client: ver avisos activos
-router.get('/client/notices',
-  authenticate, requireRole('client'),
-  noticesController.getClientNotices
-);
+// Client: ver avisos activos — definido en routes/client.js bajo /client/notices
 
 // ============================================================
 // CHECK-INS

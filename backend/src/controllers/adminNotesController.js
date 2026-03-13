@@ -71,8 +71,5 @@ async function deleteClientNote(req, res) {
   }
 }
 
-// ============================================================
-// GET /admin/clients/ranking — Ranking de clientes más activos
-// ============================================================
 
 module.exports = { getClientNotes, addClientNote, deleteClientNote };

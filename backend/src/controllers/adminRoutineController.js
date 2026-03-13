@@ -212,9 +212,5 @@ async function assignRoutine(req, res) {
   }
 }
 
-// ============================================================
-// GENERAR LINK DE PAGO PARA CLIENTE
-// El pago va directo a la cuenta MP del gimnasio
-// ============================================================
 
 module.exports = { getRoutines, getRoutineById, createRoutine, updateRoutine, deleteRoutine, assignRoutine };
